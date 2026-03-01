@@ -64,7 +64,7 @@ public class HttpMCPClient implements MCPClient {
 
         JsonObject result = sendRequest("initialize", params);
         if (result == null) {
-            log.warn("MCP 初始化失败，跳过 initialized 通知发送");
+            log.error("MCP 初始化失败，跳过 initialized 通知发送");
             return false;
         }
         // MCP 协议要求：收到 initialize 响应后，发送 notifications/initialized 通知
@@ -155,7 +155,7 @@ public class HttpMCPClient implements MCPClient {
             return rpcResponse.has("result") ? rpcResponse.getAsJsonObject("result") : null;
         } catch (IOException e) {
             String reason = e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName();
-            log.warn("MCP 请求异常，method={}, url={}, 原因={}", method, url, reason);
+            log.error("MCP 请求异常，method={}, url={}, 原因={}", method, url, reason);
             return null;
         }
     }

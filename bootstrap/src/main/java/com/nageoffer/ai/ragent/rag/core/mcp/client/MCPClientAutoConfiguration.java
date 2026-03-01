@@ -66,14 +66,14 @@ public class MCPClientAutoConfiguration {
             // 初始化连接
             boolean initialized = mcpClient.initialize();
             if (!initialized) {
-                log.warn("MCP Server [{}] 初始化失败，跳过工具注册", serverName);
+                log.error("MCP Server [{}] 初始化失败，跳过工具注册", serverName);
                 return;
             }
 
             // 获取远程工具列表
             List<MCPTool> tools = mcpClient.listTools();
             if (tools.isEmpty()) {
-                log.warn("MCP Server [{}] 未发现可用工具，跳过工具注册", serverName);
+                log.info("MCP Server [{}] 未发现可用工具，跳过工具注册", serverName);
                 return;
             }
             log.info("MCP Server [{}] 返回 {} 个工具", serverName, tools.size());
@@ -85,7 +85,7 @@ public class MCPClientAutoConfiguration {
                 log.info("注册远程 MCP 工具: toolId={}, server={}", tool.getToolId(), serverName);
             }
         } catch (Exception e) {
-            log.warn("连接 MCP Server [{}] 失败，跳过工具注册，reason={}", serverName, e.getMessage());
+            log.error("连接 MCP Server [{}] 失败，跳过工具注册，reason={}", serverName, e.getMessage());
         }
     }
 }
