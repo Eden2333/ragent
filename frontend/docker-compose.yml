@@ -1,0 +1,14 @@
+name: ragent
+
+services:
+  ragent-frontend:
+    container_name: ragent-frontend
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "3000:80"
+    environment:
+      - NODE_ENV=production
+      - BACKEND_HOST=backend:9090
+    restart: unless-stopped
