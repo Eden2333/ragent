@@ -18,13 +18,9 @@
 package com.nageoffer.ai.ragent.ingestion.node;
 
 import cn.hutool.core.util.IdUtil;
+import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.google.gson.Gson;
-import com.google.gson.JsonArray;
-import com.google.gson.JsonElement;
-import com.google.gson.JsonObject;
-import com.nageoffer.ai.ragent.rag.config.RAGDefaultProperties;
 import com.nageoffer.ai.ragent.core.chunk.VectorChunk;
 import com.nageoffer.ai.ragent.framework.exception.ClientException;
 import com.nageoffer.ai.ragent.ingestion.domain.context.DocumentSource;
@@ -33,13 +29,13 @@ import com.nageoffer.ai.ragent.ingestion.domain.enums.IngestionNodeType;
 import com.nageoffer.ai.ragent.ingestion.domain.pipeline.NodeConfig;
 import com.nageoffer.ai.ragent.ingestion.domain.result.NodeResult;
 import com.nageoffer.ai.ragent.ingestion.domain.settings.IndexerSettings;
+import com.nageoffer.ai.ragent.rag.config.RAGDefaultProperties;
 import com.nageoffer.ai.ragent.rag.core.vector.VectorSpaceId;
 import com.nageoffer.ai.ragent.rag.core.vector.VectorSpaceSpec;
 import com.nageoffer.ai.ragent.rag.core.vector.VectorStoreAdmin;
-import io.milvus.v2.client.MilvusClientV2;
-import io.milvus.v2.service.vector.request.InsertReq;
-import io.milvus.v2.service.vector.response.InsertResp;
+import com.pgvector.PGvector;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Component;
 import org.springframework.util.StringUtils;
 
@@ -50,26 +46,24 @@ import java.util.Map;
 /**
  * 索引节点类，负责将处理后的文档分块数据索引到向量数据库中
  * 该类实现了 {@link IngestionNode} 接口，是数据摄入流水线中的关键节点
- * 主要功能包括：解析配置、生成向量嵌入、确保向量空间存在以及将数据批量插入到 Milvus 等向量数据库
+ * 主要功能包括：解析配置、生成向量嵌入、确保向量空间存在以及将数据批量插入到向量数据库
  */
 @Slf4j
 @Component
 public class IndexerNode implements IngestionNode {
 
-    private static final Gson GSON = new Gson();
-
     private final ObjectMapper objectMapper;
     private final VectorStoreAdmin vectorStoreAdmin;
-    private final MilvusClientV2 milvusClient;
+    private final JdbcTemplate jdbcTemplate;
     private final RAGDefaultProperties ragDefaultProperties;
 
     public IndexerNode(ObjectMapper objectMapper,
                        VectorStoreAdmin vectorStoreAdmin,
-                       MilvusClientV2 milvusClient,
+                       JdbcTemplate jdbcTemplate,
                        RAGDefaultProperties ragDefaultProperties) {
         this.objectMapper = objectMapper;
         this.vectorStoreAdmin = vectorStoreAdmin;
-        this.milvusClient = milvusClient;
+        this.jdbcTemplate = jdbcTemplate;
         this.ragDefaultProperties = ragDefaultProperties;
     }
 
@@ -85,9 +79,9 @@ public class IndexerNode implements IngestionNode {
             return NodeResult.fail(new ClientException("没有可索引的分块"));
         }
         IndexerSettings settings = parseSettings(config.getSettings());
-        String collectionName = resolveCollectionName(context);
-        if (!StringUtils.hasText(collectionName)) {
-            return NodeResult.fail(new ClientException("索引器需要指定集合名称"));
+        String tableName = resolveCollectionName(context);
+        if (!StringUtils.hasText(tableName)) {
+            return NodeResult.fail(new ClientException("索引器需要指定表名称"));
         }
 
         int expectedDim = resolveDimension(chunks);
@@ -101,10 +95,9 @@ public class IndexerNode implements IngestionNode {
             return NodeResult.fail(ex);
         }
 
-        ensureVectorSpace(collectionName);
-        List<JsonObject> rows = buildRows(context, chunks, vectorArray, settings.getMetadataFields());
-        insertRows(collectionName, rows);
-        return NodeResult.ok("已写入 " + rows.size() + " 个分块到集合 " + collectionName);
+        ensureVectorSpace(tableName);
+        int insertCount = insertRows(context, tableName, chunks, vectorArray, settings.getMetadataFields());
+        return NodeResult.ok("已写入 " + insertCount + " 个分块到表 " + tableName);
     }
 
     private IndexerSettings parseSettings(JsonNode node) {
@@ -118,12 +111,12 @@ public class IndexerNode implements IngestionNode {
         if (context.getVectorSpaceId() != null && StringUtils.hasText(context.getVectorSpaceId().getLogicalName())) {
             return context.getVectorSpaceId().getLogicalName();
         }
-        return ragDefaultProperties.getCollectionName();
+        return ragDefaultProperties.getTableName();
     }
 
-    private void ensureVectorSpace(String collectionName) {
+    private void ensureVectorSpace(String tableName) {
         boolean vectorSpaceExists = vectorStoreAdmin.vectorSpaceExists(VectorSpaceId.builder()
-                .logicalName(collectionName)
+                .logicalName(tableName)
                 .build());
         if (vectorSpaceExists) {
             return;
@@ -131,23 +124,80 @@ public class IndexerNode implements IngestionNode {
 
         VectorSpaceSpec spaceSpec = VectorSpaceSpec.builder()
                 .spaceId(VectorSpaceId.builder()
-                        .logicalName(collectionName)
+                        .logicalName(tableName)
                         .build())
                 .remark("RAG向量存储空间")
                 .build();
         vectorStoreAdmin.ensureVectorSpace(spaceSpec);
     }
 
-    private void insertRows(String collectionName, List<JsonObject> rows) {
-        if (rows == null || rows.isEmpty()) {
-            return;
+    private int insertRows(IngestionContext context, String tableName, List<VectorChunk> chunks, 
+                          float[][] vectors, List<String> metadataFields) {
+        if (chunks == null || chunks.isEmpty()) {
+            return 0;
         }
-        InsertReq req = InsertReq.builder()
-                .collectionName(collectionName)
-                .data(rows)
-                .build();
-        InsertResp resp = milvusClient.insert(req);
-        log.info("Milvus 写入成功，集合={}，行数={}", collectionName, resp.getInsertCnt());
+        
+        String sql = String.format(
+            "INSERT INTO %s (doc_id, content, metadata, embedding) VALUES (?, ?, ?::jsonb, ?::vector)",
+            tableName
+        );
+        
+        Map<String, Object> mergedMetadata = mergeMetadata(context);
+        int insertCount = 0;
+        
+        for (int i = 0; i < chunks.size(); i++) {
+            VectorChunk chunk = chunks.get(i);
+            String chunkId = StringUtils.hasText(chunk.getChunkId()) ? chunk.getChunkId() : IdUtil.getSnowflakeNextIdStr();
+            chunk.setChunkId(chunkId);
+            chunk.setEmbedding(vectors[i]);
+
+            String content = chunk.getContent() == null ? "" : chunk.getContent();
+
+            Map<String, Object> metadata = new HashMap<>();
+            metadata.put("chunk_index", chunk.getIndex());
+            metadata.put("task_id", context.getTaskId());
+            metadata.put("pipeline_id", context.getPipelineId());
+            
+            DocumentSource source = context.getSource();
+            if (source != null && source.getType() != null) {
+                metadata.put("source_type", source.getType().getValue());
+            }
+            if (source != null && StringUtils.hasText(source.getLocation())) {
+                metadata.put("source_location", source.getLocation());
+            }
+
+            if (metadataFields != null && !metadataFields.isEmpty()) {
+                Map<String, Object> combined = new HashMap<>(mergedMetadata);
+                if (chunk.getMetadata() != null) {
+                    combined.putAll(chunk.getMetadata());
+                }
+                for (String field : metadataFields) {
+                    if (StringUtils.hasText(field)) {
+                        Object value = combined.get(field);
+                        if (value != null) {
+                            metadata.put(field, value);
+                        }
+                    }
+                }
+            }
+            
+            try {
+                String metadataJson = objectMapper.writeValueAsString(metadata);
+                PGvector pgVector = new PGvector(vectors[i]);
+                
+                jdbcTemplate.update(sql, chunkId, content, metadataJson, pgVector);
+                insertCount++;
+            } catch (JsonProcessingException e) {
+                log.error("插入向量数据失败: chunkId={}", chunkId, e);
+                throw new ClientException("插入向量数据失败: " + e.getMessage());
+            } catch (Exception e) {
+                log.error("插入向量数据失败: chunkId={}", chunkId, e);
+                throw new ClientException("插入向量数据失败: " + e.getMessage());
+            }
+        }
+        
+        log.info("pgvector 写入成功，表={}，行数={}", tableName, insertCount);
+        return insertCount;
     }
 
     private int resolveDimension(List<VectorChunk> chunks) {
@@ -178,80 +228,11 @@ public class IndexerNode implements IngestionNode {
         return out;
     }
 
-    private List<JsonObject> buildRows(IngestionContext context,
-                                       List<VectorChunk> chunks,
-                                       float[][] vectors,
-                                       List<String> metadataFields) {
-        Map<String, Object> mergedMetadata = mergeMetadata(context);
-        List<JsonObject> rows = new java.util.ArrayList<>(chunks.size());
-        for (int i = 0; i < chunks.size(); i++) {
-            VectorChunk chunk = chunks.get(i);
-            String chunkId = StringUtils.hasText(chunk.getChunkId()) ? chunk.getChunkId() : IdUtil.getSnowflakeNextIdStr();
-            chunk.setChunkId(chunkId);
-            chunk.setEmbedding(vectors[i]);
-
-            // 使用原始内容作为存储内容，而不是用于embedding的文本
-            String content = chunk.getContent() == null ? "" : chunk.getContent();
-            if (content.length() > 65535) {
-                content = content.substring(0, 65535);
-            }
-
-            JsonObject metadata = new JsonObject();
-            metadata.addProperty("chunk_index", chunk.getIndex());
-            metadata.addProperty("task_id", context.getTaskId());
-            metadata.addProperty("pipeline_id", context.getPipelineId());
-            DocumentSource source = context.getSource();
-            if (source != null && source.getType() != null) {
-                metadata.addProperty("source_type", source.getType().getValue());
-            }
-            if (source != null && StringUtils.hasText(source.getLocation())) {
-                metadata.addProperty("source_location", source.getLocation());
-            }
-
-            if (metadataFields != null && !metadataFields.isEmpty()) {
-                Map<String, Object> combined = new HashMap<>(mergedMetadata);
-                if (chunk.getMetadata() != null) {
-                    combined.putAll(chunk.getMetadata());
-                }
-                for (String field : metadataFields) {
-                    if (!StringUtils.hasText(field)) {
-                        continue;
-                    }
-                    Object value = combined.get(field);
-                    if (value != null) {
-                        addMetadataValue(metadata, field, value);
-                    }
-                }
-            }
-
-            JsonObject row = new JsonObject();
-            row.addProperty("doc_id", chunkId);
-            row.addProperty("content", content);
-            row.add("metadata", metadata);
-            row.add("embedding", toJsonArray(vectors[i]));
-            rows.add(row);
-        }
-        return rows;
-    }
-
     private Map<String, Object> mergeMetadata(IngestionContext context) {
         Map<String, Object> merged = new HashMap<>();
         if (context.getMetadata() != null) {
             merged.putAll(context.getMetadata());
         }
         return merged;
-    }
-
-    private void addMetadataValue(JsonObject metadata, String field, Object value) {
-        JsonElement element = GSON.toJsonTree(value);
-        metadata.add(field, element);
-    }
-
-    private JsonArray toJsonArray(float[] vector) {
-        JsonArray arr = new JsonArray(vector.length);
-        for (float v : vector) {
-            arr.add(v);
-        }
-        return arr;
     }
 }

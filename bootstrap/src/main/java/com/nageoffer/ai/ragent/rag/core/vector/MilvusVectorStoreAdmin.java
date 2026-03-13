@@ -17,111 +17,65 @@
 
 package com.nageoffer.ai.ragent.rag.core.vector;
 
-import com.nageoffer.ai.ragent.rag.config.RAGDefaultProperties;
 import com.nageoffer.ai.ragent.framework.exception.kb.VectorCollectionAlreadyExistsException;
-import io.milvus.v2.client.MilvusClientV2;
-import io.milvus.v2.common.ConsistencyLevel;
-import io.milvus.v2.common.DataType;
-import io.milvus.v2.common.IndexParam;
-import io.milvus.v2.service.collection.request.CreateCollectionReq;
-import io.milvus.v2.service.collection.request.HasCollectionReq;
+import com.nageoffer.ai.ragent.rag.config.RAGDefaultProperties;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Component;
-
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Map;
 
 @Slf4j
 @Component
 @RequiredArgsConstructor
 public class MilvusVectorStoreAdmin implements VectorStoreAdmin {
 
-    private final MilvusClientV2 milvusClient;
+    private final JdbcTemplate jdbcTemplate;
     private final RAGDefaultProperties ragDefaultProperties;
 
     @Override
     public void ensureVectorSpace(VectorSpaceSpec spec) {
-        String logicalName = spec.getSpaceId().getLogicalName();
-        boolean exists = Boolean.TRUE.equals(milvusClient.hasCollection(
-                HasCollectionReq.builder().collectionName(logicalName).build()
-        ));
-        if (exists) {
-            throw new VectorCollectionAlreadyExistsException(logicalName);
+        String tableName = spec.getSpaceId().getLogicalName();
+        
+        if (vectorSpaceExists(spec.getSpaceId())) {
+            throw new VectorCollectionAlreadyExistsException(tableName);
         }
 
-        List<CreateCollectionReq.FieldSchema> fieldSchemaList = new ArrayList<>();
-
-        fieldSchemaList.add(
-                CreateCollectionReq.FieldSchema.builder()
-                        .name("doc_id")
-                        .dataType(DataType.VarChar)
-                        .maxLength(36)
-                        .isPrimaryKey(true)
-                        .autoID(false)
-                        .build()
+        String createTableSql = String.format(
+            "CREATE TABLE %s (" +
+            "  doc_id VARCHAR(36) PRIMARY KEY," +
+            "  content TEXT," +
+            "  metadata JSONB," +
+            "  embedding vector(%d)" +
+            ")",
+            tableName,
+            ragDefaultProperties.getDimension()
         );
-
-        fieldSchemaList.add(
-                CreateCollectionReq.FieldSchema.builder()
-                        .name("content")
-                        .dataType(DataType.VarChar)
-                        .maxLength(65535)
-                        .build()
-        );
-
-        fieldSchemaList.add(
-                CreateCollectionReq.FieldSchema.builder()
-                        .name("metadata")
-                        .dataType(DataType.JSON)
-                        .build()
-        );
-
-        fieldSchemaList.add(
-                CreateCollectionReq.FieldSchema.builder()
-                        .name("embedding")
-                        .dataType(DataType.FloatVector)
-                        .dimension(ragDefaultProperties.getDimension())
-                        .build()
-        );
-
-        CreateCollectionReq.CollectionSchema collectionSchema = CreateCollectionReq.CollectionSchema
-                .builder()
-                .fieldSchemaList(fieldSchemaList)
-                .build();
-
-        IndexParam hnswIndex = IndexParam.builder()
-                .fieldName("embedding")
-                .indexType(IndexParam.IndexType.HNSW)
-                .metricType(IndexParam.MetricType.COSINE)
-                .indexName("embedding")
-                .extraParams(Map.of(
-                        "M", "48",
-                        "efConstruction", "200",
-                        "mmap.enabled", "false"
-                ))
-                .build();
-
-        CreateCollectionReq createReq = CreateCollectionReq.builder()
-                .collectionName(logicalName)
-                .collectionSchema(collectionSchema)
-                .primaryFieldName("doc_id")
-                .vectorFieldName("embedding")
-                .metricType(ragDefaultProperties.getMetricType())
-                .consistencyLevel(ConsistencyLevel.BOUNDED)
-                .indexParams(List.of(hnswIndex))
-                .description(spec.getRemark())
-                .build();
-
-        milvusClient.createCollection(createReq);
+        
+        jdbcTemplate.execute(createTableSql);
+        
+        // pgvector HNSW 索引支持最大 2000 维
+        if (ragDefaultProperties.getDimension() <= 2000) {
+            String createIndexSql = String.format(
+                "CREATE INDEX ON %s USING hnsw (embedding vector_cosine_ops)",
+                tableName
+            );
+            jdbcTemplate.execute(createIndexSql);
+            log.info("Created vector table with HNSW index: {} with dimension: {}", tableName, ragDefaultProperties.getDimension());
+        } else {
+            log.warn("Created vector table without index: {} with dimension: {} (exceeds 2000 limit for HNSW)", 
+                tableName, ragDefaultProperties.getDimension());
+        }
     }
 
     @Override
     public boolean vectorSpaceExists(VectorSpaceId spaceId) {
-        String logicalName = spaceId.getLogicalName();
-        return milvusClient.hasCollection(
-                HasCollectionReq.builder().collectionName(logicalName).build()
-        );
+        String tableName = spaceId.getLogicalName();
+        String checkSql = "SELECT EXISTS (" +
+            "  SELECT FROM information_schema.tables " +
+            "  WHERE table_name = ?" +
+            ")";
+        
+        Boolean exists = jdbcTemplate.queryForObject(checkSql, Boolean.class, tableName);
+        return Boolean.TRUE.equals(exists);
     }
 }

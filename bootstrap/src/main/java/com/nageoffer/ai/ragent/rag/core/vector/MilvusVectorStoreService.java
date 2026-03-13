@@ -1,51 +1,33 @@
-/*
- * Licensed to the Apache Software Foundation (ASF) under one or more
- * contributor license agreements.  See the NOTICE file distributed with
- * this work for additional information regarding copyright ownership.
- * The ASF licenses this file to You under the Apache License, Version 2.0
- * (the "License"); you may not use this file except in compliance with
- * the License.  You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
-
 package com.nageoffer.ai.ragent.rag.core.vector;
 
 import cn.hutool.core.lang.Assert;
 import cn.hutool.core.util.IdUtil;
-import com.google.gson.JsonArray;
-import com.google.gson.JsonObject;
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.nageoffer.ai.ragent.core.chunk.VectorChunk;
+import com.nageoffer.ai.ragent.framework.exception.ClientException;
 import com.nageoffer.ai.ragent.knowledge.dao.entity.KnowledgeBaseDO;
 import com.nageoffer.ai.ragent.knowledge.dao.mapper.KnowledgeBaseMapper;
-import com.nageoffer.ai.ragent.framework.exception.ClientException;
-import io.milvus.v2.client.MilvusClientV2;
-import io.milvus.v2.service.vector.request.DeleteReq;
-import io.milvus.v2.service.vector.request.InsertReq;
-import io.milvus.v2.service.vector.request.UpsertReq;
-import io.milvus.v2.service.vector.response.DeleteResp;
-import io.milvus.v2.service.vector.response.InsertResp;
-import io.milvus.v2.service.vector.response.UpsertResp;
+import com.pgvector.PGvector;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 
+
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 @Slf4j
 @Service
 @RequiredArgsConstructor
 public class MilvusVectorStoreService implements VectorStoreService {
 
-    private final MilvusClientV2 milvusClient;
+    private final JdbcTemplate jdbcTemplate;
     private final KnowledgeBaseMapper kbMapper;
+    private final ObjectMapper objectMapper = new ObjectMapper();
 
     @Override
     public void indexDocumentChunks(String kbId, String docId, List<VectorChunk> chunks) {
@@ -54,41 +36,41 @@ public class MilvusVectorStoreService implements VectorStoreService {
         KnowledgeBaseDO kbDO = kbMapper.selectById(kbId);
         Assert.isFalse(kbDO == null, () -> new ClientException("知识库不存在"));
 
-        // 维度校验（你的 schema dim=4096）
         final int dim = 4096;
         List<float[]> vectors = extractVectors(chunks, dim);
 
-        List<JsonObject> rows = new ArrayList<>(chunks.size());
+        String tableName = kbDO.getCollectionName();
+        String sql = String.format(
+            "INSERT INTO %s (doc_id, content, metadata, embedding) VALUES (?, ?, ?::jsonb, ?::vector)",
+            tableName
+        );
+
+        int insertCount = 0;
         for (int i = 0; i < chunks.size(); i++) {
             VectorChunk chunk = chunks.get(i);
-
             String content = chunk.getContent() == null ? "" : chunk.getContent();
-            if (content.length() > 65535) {
-                content = content.substring(0, 65535);
+            
+            Map<String, Object> metadata = new HashMap<>();
+            metadata.put("kb_id", kbId);
+            metadata.put("doc_id", docId);
+            metadata.put("chunk_index", chunk.getIndex());
+            
+            try {
+                String metadataJson = objectMapper.writeValueAsString(metadata);
+                PGvector pgVector = new PGvector(vectors.get(i));
+                
+                jdbcTemplate.update(sql, chunk.getChunkId(), content, metadataJson, pgVector);
+                insertCount++;
+            } catch (JsonProcessingException e) {
+                log.error("插入向量数据失败: chunkId={}", chunk.getChunkId(), e);
+                throw new ClientException("插入向量数据失败: " + e.getMessage());
+            } catch (Exception e) {
+                log.error("插入向量数据失败: chunkId={}", chunk.getChunkId(), e);
+                throw new ClientException("插入向量数据失败: " + e.getMessage());
             }
-
-            JsonObject metadata = new JsonObject();
-            metadata.addProperty("kb_id", kbId);
-            metadata.addProperty("doc_id", docId);
-            metadata.addProperty("chunk_index", chunk.getIndex());
-
-            JsonObject row = new JsonObject();
-            row.addProperty("doc_id", chunk.getChunkId());
-            row.addProperty("content", content);
-            row.add("metadata", metadata);
-            row.add("embedding", toJsonArray(vectors.get(i)));
-
-            rows.add(row);
         }
 
-        String collection = kbDO.getCollectionName();
-        InsertReq req = InsertReq.builder()
-                .collectionName(collection)
-                .data(rows)
-                .build();
-
-        InsertResp resp = milvusClient.insert(req);
-        log.info("Milvus chunk 建立/写入向量索引成功, collection={}, rows={}", collection, resp.getInsertCnt());
+        log.info("pgvector chunk 建立/写入向量索引成功, table={}, rows={}", tableName, insertCount);
     }
 
     @Override
@@ -98,41 +80,39 @@ public class MilvusVectorStoreService implements VectorStoreService {
         KnowledgeBaseDO kbDO = kbMapper.selectById(kbId);
         Assert.isFalse(kbDO == null, () -> new ClientException("知识库不存在"));
 
-        // 维度校验
         final int dim = 4096;
         float[] vector = extractVector(chunk, dim);
 
         String chunkPk = chunk.getChunkId() != null ? chunk.getChunkId() : IdUtil.getSnowflakeNextIdStr();
-
         String content = chunk.getContent() == null ? "" : chunk.getContent();
-        if (content.length() > 65535) {
-            content = content.substring(0, 65535);
+
+        Map<String, Object> metadata = new HashMap<>();
+        metadata.put("kb_id", kbId);
+        metadata.put("doc_id", docId);
+        metadata.put("chunk_index", chunk.getIndex());
+
+        String tableName = kbDO.getCollectionName();
+        String sql = String.format(
+            "INSERT INTO %s (doc_id, content, metadata, embedding) VALUES (?, ?, ?::jsonb, ?::vector) " +
+            "ON CONFLICT (doc_id) DO UPDATE SET content = EXCLUDED.content, metadata = EXCLUDED.metadata, embedding = EXCLUDED.embedding",
+            tableName
+        );
+
+        try {
+            String metadataJson = objectMapper.writeValueAsString(metadata);
+            PGvector pgVector = new PGvector(vector);
+            
+            jdbcTemplate.update(sql, chunkPk, content, metadataJson, pgVector);
+            
+            log.info("pgvector 更新 chunk 向量索引成功, table={}, kbId={}, docId={}, chunkId={}",
+                    tableName, kbId, docId, chunkPk);
+        } catch (JsonProcessingException e) {
+            log.error("更新向量数据失败: chunkId={}", chunkPk, e);
+            throw new ClientException("更新向量数据失败: " + e.getMessage());
+        } catch (Exception e) {
+            log.error("更新向量数据失败: chunkId={}", chunkPk, e);
+            throw new ClientException("更新向量数据失败: " + e.getMessage());
         }
-
-        JsonObject metadata = new JsonObject();
-        metadata.addProperty("kb_id", kbId);
-        metadata.addProperty("doc_id", docId);
-        metadata.addProperty("chunk_index", chunk.getIndex());
-
-        JsonObject row = new JsonObject();
-        row.addProperty("doc_id", chunkPk);
-        row.addProperty("content", content);
-        row.add("metadata", metadata);
-        row.add("embedding", toJsonArray(vector));
-
-        List<JsonObject> rows = List.of(row);
-
-        String collection = kbDO.getCollectionName();
-
-        UpsertReq upsertReq = UpsertReq.builder()
-                .collectionName(collection)
-                .data(rows)
-                .build();
-
-        UpsertResp resp = milvusClient.upsert(upsertReq);
-
-        log.info("Milvus 更新 chunk 向量索引成功, collection={}, kbId={}, docId={}, chunkId={}, upsertCnt={}",
-                collection, kbId, docId, chunkPk, resp.getUpsertCnt());
     }
 
     private List<float[]> extractVectors(List<VectorChunk> chunks, int expectedDim) {
@@ -161,48 +141,27 @@ public class MilvusVectorStoreService implements VectorStoreService {
         KnowledgeBaseDO kbDO = kbMapper.selectById(kbId);
         Assert.notNull(kbDO, () -> new ClientException("知识库不存在"));
 
-        String collection = kbDO.getCollectionName();
+        String tableName = kbDO.getCollectionName();
+        String sql = String.format(
+            "DELETE FROM %s WHERE metadata->>'kb_id' = ? AND metadata->>'doc_id' = ?",
+            tableName
+        );
 
-        // 按 JSON 过滤：删除该 kbId 下、该文档ID 的所有 chunk
-        String filter = "metadata[\"kb_id\"] == \"" + kbId + "\" && " +
-                "metadata[\"doc_id\"] == \"" + docId + "\"";
-
-        DeleteReq deleteReq = DeleteReq.builder()
-                .collectionName(collection)
-                .filter(filter)
-                .build();
-
-        DeleteResp resp = milvusClient.delete(deleteReq);
-        log.info("Milvus 删除指定文档的所有 chunk 向量索引成功, collection={}, kbId={}, docId={}, deleteCnt={}",
-                collection, kbId, docId, resp.getDeleteCnt());
+        int deleteCount = jdbcTemplate.update(sql, kbId, docId);
+        log.info("pgvector 删除指定文档的所有 chunk 向量索引成功, table={}, kbId={}, docId={}, deleteCnt={}",
+                tableName, kbId, docId, deleteCount);
     }
-
 
     @Override
     public void deleteChunkById(String kbId, String chunkId) {
         KnowledgeBaseDO kbDO = kbMapper.selectById(kbId);
         Assert.isFalse(kbDO == null, () -> new ClientException("知识库不存在"));
 
-        String collection = kbDO.getCollectionName();
+        String tableName = kbDO.getCollectionName();
+        String sql = String.format("DELETE FROM %s WHERE doc_id = ?", tableName);
 
-        // chunkId 就是 Milvus 中的 doc_id（主键），直接通过主键删除
-        String filter = "doc_id == \"" + chunkId + "\"";
-
-        DeleteReq deleteReq = DeleteReq.builder()
-                .collectionName(collection)
-                .filter(filter)
-                .build();
-
-        DeleteResp resp = milvusClient.delete(deleteReq);
-        log.info("Milvus 删除指定 chunk 向量索引成功, collection={}, kbId={}, chunkId={}, deleteCnt={}",
-                collection, kbId, chunkId, resp.getDeleteCnt());
-    }
-
-    private JsonArray toJsonArray(float[] v) {
-        JsonArray arr = new JsonArray(v.length);
-        for (float x : v) {
-            arr.add(x);
-        }
-        return arr;
+        int deleteCount = jdbcTemplate.update(sql, chunkId);
+        log.info("pgvector 删除指定 chunk 向量索引成功, table={}, kbId={}, chunkId={}, deleteCnt={}",
+                tableName, kbId, chunkId, deleteCount);
     }
 }

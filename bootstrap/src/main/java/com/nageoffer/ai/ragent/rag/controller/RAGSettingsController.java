@@ -80,9 +80,8 @@ public class RAGSettingsController {
 
     private DefaultSettings toDefaultSettings(RAGDefaultProperties props) {
         return DefaultSettings.builder()
-                .collectionName(props.getCollectionName())
+                .collectionName(props.getTableName())
                 .dimension(props.getDimension())
-                .metricType(props.getMetricType())
                 .build();
     }
 

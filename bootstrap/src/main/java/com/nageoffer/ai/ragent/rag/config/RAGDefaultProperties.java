@@ -44,11 +44,11 @@ import org.springframework.context.annotation.Configuration;
 public class RAGDefaultProperties {
 
     /**
-     * 默认向量集合名称
+     * 默认向量表名称
      * <p>
-     * 用于指定在向量数据库中存储向量数据的默认集合（Collection）名称
+     * 用于指定在 PostgreSQL 中存储向量数据的表名称
      */
-    private String collectionName;
+    private String tableName;
 
     /**
      * 向量维度
@@ -58,15 +58,5 @@ public class RAGDefaultProperties {
      */
     private Integer dimension;
 
-    /**
-     * 向量相似度度量类型
-     * <p>
-     * 用于计算向量之间相似度的度量方法，常见取值：
-     * <ul>
-     *   <li>{@code COSINE}：余弦相似度</li>
-     *   <li>{@code L2}：欧氏距离</li>
-     *   <li>{@code IP}：内积</li>
-     * </ul>
-     */
-    private String metricType;
+
 }
