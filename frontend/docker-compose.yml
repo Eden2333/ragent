@@ -10,5 +10,7 @@ services:
       - "3000:80"
     environment:
       - NODE_ENV=production
-      - BACKEND_HOST=backend:9090
+      - BACKEND_HOST=host.docker.internal:9090
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     restart: unless-stopped

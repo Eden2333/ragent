@@ -7,6 +7,11 @@ COPY package.json package-lock.json* ./
 RUN npm ci
 
 COPY . .
+
+# 设置构建时的环境变量 - 必须在 COPY 之后，npm run build 之前
+ARG VITE_API_BASE_URL=/api/ragent
+ENV VITE_API_BASE_URL=${VITE_API_BASE_URL}
+
 RUN npm run build
 
 # Production stage

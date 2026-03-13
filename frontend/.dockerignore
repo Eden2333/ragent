@@ -5,6 +5,8 @@ dist
 *.md
 .env
 .env.local
+.env.production
+.env.development
 .vscode
 .idea
 *.log
