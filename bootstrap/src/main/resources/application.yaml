@@ -13,11 +13,11 @@ spring:
       max-request-size: 100MB
 
   datasource:
-    driver-class-name: org.postgresql.Driver
+    driver-class-name: com.mysql.cj.jdbc.Driver
     type: com.zaxxer.hikari.HikariDataSource
-    username: postgres
+    username: root
     password: root
-    url: jdbc:postgresql://127.0.0.1:5432/ragent?currentSchema=public
+    url: jdbc:mysql://127.0.0.1:3306/ragent?characterEncoding=utf-8&zeroDateTimeBehavior=convertToNull&transformedBitIsBoolean=true&serverTimezone=GMT%2B8&allowPublicKeyRetrieval=true
     hikari:
       connection-timeout: 5000
       idle-timeout: 600000
@@ -30,11 +30,16 @@ spring:
     redis:
       host: 127.0.0.1
       port: 6379
+      password: 123456
+
+milvus:
+  uri: http://localhost:19530
 
 rag:
   default:
-    table-name: rag_vectors
-    dimension: 1024
+    collection-name: rag_default_store
+    dimension: 4096
+    metric-type: COSINE
 
   query-rewrite:
     enabled: true
@@ -133,17 +138,17 @@ ai:
         priority: 2
 
   embedding:
-    default-model: bge-large-zh
+    default-model: qwen-emb-8b
     candidates:
-      - id: bge-large-zh
+      - id: qwen-emb-8b
         provider: siliconflow
-        model: BAAI/bge-large-zh-v1.5
-        dimension: 1024
+        model: Qwen/Qwen3-Embedding-8B
+        dimension: 4096
         priority: 1
-      - id: text-embedding-3-large
-        provider: siliconflow
-        model: BAAI/bge-m3
-        dimension: 1024
+      - id: qwen-emb-local
+        provider: ollama
+        model: qwen3-embedding:8b-fp16
+        dimension: 4096
         priority: 2
 
   rerank:
