@@ -30,7 +30,7 @@ spring:
     redis:
       host: 127.0.0.1
       port: 6379
-      password: 123456
+      password: root
 
 milvus:
   uri: http://localhost:19530
@@ -115,8 +115,8 @@ ai:
     message-chunk-size: 1
 
   chat:
-    default-model: qwen3-max
-    deep-thinking-model: qwen3-max
+    default-model: qwen3-local
+    deep-thinking-model: qwen3-local
     candidates:
       - id: qwen-plus
         provider: bailian
@@ -134,11 +134,11 @@ ai:
         priority: 0
       - id: qwen3-local
         provider: ollama
-        model: qwen3:8b-fp16
+        model: qwen2.5:7b-instruct
         priority: 2
 
   embedding:
-    default-model: qwen-emb-8b
+    default-model: nomic-embed-text:latest
     candidates:
       - id: qwen-emb-8b
         provider: siliconflow
@@ -147,7 +147,7 @@ ai:
         priority: 1
       - id: qwen-emb-local
         provider: ollama
-        model: qwen3-embedding:8b-fp16
+        model: nomic-embed-text:latest
         dimension: 4096
         priority: 2
 
