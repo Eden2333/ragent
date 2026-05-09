@@ -17,23 +17,25 @@ spring:
     type: com.zaxxer.hikari.HikariDataSource
     username: root
     password: root
-    url: jdbc:mysql://127.0.0.1:3306/ragent?characterEncoding=utf-8&zeroDateTimeBehavior=convertToNull&transformedBitIsBoolean=true&serverTimezone=GMT%2B8&allowPublicKeyRetrieval=true
+    url: jdbc:mysql://${SERVER_HOST:127.0.0.1}:3306/ragent?characterEncoding=utf-8&zeroDateTimeBehavior=convertToNull&transformedBitIsBoolean=true&serverTimezone=GMT%2B8&allowPublicKeyRetrieval=true
     hikari:
-      connection-timeout: 5000
-      idle-timeout: 600000
-      max-lifetime: 1800000
+      connection-timeout: 10000
+      idle-timeout: 300000
+      max-lifetime: 600000
       maximum-pool-size: 10
-      minimum-idle: 5
+      minimum-idle: 2
       pool-name: RagentHikariPool
+      keepalive-time: 60000
+      connection-test-query: SELECT 1
 
   data:
     redis:
-      host: 127.0.0.1
+      host: ${SERVER_HOST:127.0.0.1}
       port: 6379
       password: root
 
 milvus:
-  uri: http://localhost:19530
+  uri: http://${SERVER_HOST:127.0.0.1}:19530
 
 rag:
   default:
@@ -72,7 +74,7 @@ rag:
   mcp:
     servers:
       - name: default
-        url: http://localhost:9099
+        url: http://${SERVER_HOST:127.0.0.1}:9099
 
   search:
     channels:
@@ -90,7 +92,7 @@ rag:
 ai:
   providers:
     ollama:
-      url: http://localhost:11434
+      url: http://${SERVER_HOST:127.0.0.1}:11434
       endpoints:
         chat: /api/chat
         embedding: /api/embed
@@ -164,7 +166,7 @@ ai:
         priority: 100
 
 rustfs:
-  url: http://localhost:9000
+  url: http://${SERVER_HOST:127.0.0.1}:9000
   access-key-id: rustfsadmin
   secret-access-key: rustfsadmin
 
