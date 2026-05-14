@@ -18,6 +18,7 @@
 package com.nageoffer.ai.ragent.infra.chat;
 
 import cn.hutool.core.collection.CollUtil;
+import com.nageoffer.ai.ragent.framework.convention.ChatMessage;
 import com.nageoffer.ai.ragent.framework.convention.ChatRequest;
 import com.nageoffer.ai.ragent.framework.errorcode.BaseErrorCode;
 import com.nageoffer.ai.ragent.framework.exception.RemoteException;
@@ -80,12 +81,19 @@ public class RoutingLLMService implements LLMService {
     @Override
     @RagTraceNode(name = "llm-chat-routing", type = "LLM_ROUTING")
     public String chat(ChatRequest request) {
-        return executor.executeWithFallback(
+        logInput("chat", request, null);
+        long startTime = System.currentTimeMillis();
+        String result = executor.executeWithFallback(
                 ModelCapability.CHAT,
                 selector.selectChatCandidates(request.getThinking()),
                 target -> clientsByProvider.get(target.candidate().getProvider()),
-                (client, target) -> client.chat(request, target)
+                (client, target) -> {
+                    String response = client.chat(request, target);
+                    logOutputSync(target, response, System.currentTimeMillis() - startTime);
+                    return response;
+                }
         );
+        return result;
     }
 
     @Override
@@ -96,8 +104,11 @@ public class RoutingLLMService implements LLMService {
             throw new RemoteException(STREAM_NO_PROVIDER_MESSAGE);
         }
 
+        logInput("streamChat", request, targets.get(0));
+
         String label = ModelCapability.CHAT.getDisplayName();
         Throwable lastError = null;
+        long startTime = System.currentTimeMillis();
 
         for (ModelTarget target : targets) {
             ChatClient client = resolveClient(target, label);
@@ -106,7 +117,8 @@ public class RoutingLLMService implements LLMService {
             }
 
             FirstPacketAwaiter awaiter = new FirstPacketAwaiter();
-            ProbeBufferingCallback wrapper = new ProbeBufferingCallback(callback, awaiter);
+            LoggingStreamCallback loggingCallback = new LoggingStreamCallback(callback, target, startTime);
+            ProbeBufferingCallback wrapper = new ProbeBufferingCallback(loggingCallback, awaiter);
 
             StreamCancellationHandle handle;
             try {
@@ -324,6 +336,118 @@ public class RoutingLLMService implements LLMService {
             THINKING,
             COMPLETE,
             ERROR
+        }
+    }
+
+    // ==================== 日志辅助方法 ====================
+
+    /**
+     * 记录模型调用输入
+     */
+    private void logInput(String method, ChatRequest request, ModelTarget target) {
+        List<ChatMessage> messages = request.getMessages();
+        int messageCount = messages != null ? messages.size() : 0;
+        String targetInfo = target != null
+                ? String.format("provider=%s, model=%s", target.candidate().getProvider(), target.candidate().getModel())
+                : "pending routing";
+
+        log.info("[LLM-{}] 调用开始 | {} | 消息数: {}, temperature: {}, topP: {}, thinking: {}",
+                method, targetInfo, messageCount,
+                request.getTemperature(), request.getTopP(), request.getThinking());
+
+        if (log.isDebugEnabled() && messages != null) {
+            for (int i = 0; i < messages.size(); i++) {
+                ChatMessage msg = messages.get(i);
+                String content = msg.getContent();
+                String truncated = content != null && content.length() > 500
+                        ? content.substring(0, 500) + "...(truncated, total " + content.length() + " chars)"
+                        : content;
+                log.debug("[LLM-{}] 输入消息[{}] role={}, content={}", method, i, msg.getRole(), truncated);
+            }
+        }
+    }
+
+    /**
+     * 记录同步调用输出
+     */
+    private void logOutputSync(ModelTarget target, String response, long elapsedMs) {
+        int length = response != null ? response.length() : 0;
+        log.info("[LLM-chat] 调用完成 | provider={}, model={} | 输出长度: {} chars, 耗时: {}ms",
+                target.candidate().getProvider(), target.candidate().getModel(), length, elapsedMs);
+
+        if (log.isDebugEnabled()) {
+            String truncated = response != null && response.length() > 1000
+                    ? response.substring(0, 1000) + "...(truncated, total " + response.length() + " chars)"
+                    : response;
+            log.debug("[LLM-chat] 输出内容: {}", truncated);
+        }
+    }
+
+    /**
+     * 流式调用日志包装回调
+     * <p>在流式输出完成时记录输出摘要和耗时</p>
+     */
+    private class LoggingStreamCallback implements StreamCallback {
+
+        private final StreamCallback delegate;
+        private final ModelTarget target;
+        private final long startTime;
+        private final StringBuilder contentBuffer = new StringBuilder();
+        private final StringBuilder thinkingBuffer = new StringBuilder();
+
+        private LoggingStreamCallback(StreamCallback delegate, ModelTarget target, long startTime) {
+            this.delegate = delegate;
+            this.target = target;
+            this.startTime = startTime;
+        }
+
+        @Override
+        public void onContent(String content) {
+            if (content != null) {
+                contentBuffer.append(content);
+            }
+            delegate.onContent(content);
+        }
+
+        @Override
+        public void onThinking(String content) {
+            if (content != null) {
+                thinkingBuffer.append(content);
+            }
+            delegate.onThinking(content);
+        }
+
+        @Override
+        public void onComplete() {
+            long elapsedMs = System.currentTimeMillis() - startTime;
+            log.info("[LLM-streamChat] 调用完成 | provider={}, model={} | 输出长度: {} chars, 思考长度: {} chars, 耗时: {}ms",
+                    target.candidate().getProvider(), target.candidate().getModel(),
+                    contentBuffer.length(), thinkingBuffer.length(), elapsedMs);
+
+            if (log.isDebugEnabled()) {
+                String content = contentBuffer.toString();
+                String truncated = content.length() > 1000
+                        ? content.substring(0, 1000) + "...(truncated, total " + content.length() + " chars)"
+                        : content;
+                log.debug("[LLM-streamChat] 输出内容: {}", truncated);
+                if (thinkingBuffer.length() > 0) {
+                    String thinking = thinkingBuffer.toString();
+                    String thinkTruncated = thinking.length() > 500
+                            ? thinking.substring(0, 500) + "...(truncated, total " + thinking.length() + " chars)"
+                            : thinking;
+                    log.debug("[LLM-streamChat] 思考内容: {}", thinkTruncated);
+                }
+            }
+            delegate.onComplete();
+        }
+
+        @Override
+        public void onError(Throwable t) {
+            long elapsedMs = System.currentTimeMillis() - startTime;
+            log.warn("[LLM-streamChat] 调用失败 | provider={}, model={} | 已输出: {} chars, 耗时: {}ms, 错误: {}",
+                    target.candidate().getProvider(), target.candidate().getModel(),
+                    contentBuffer.length(), elapsedMs, t.getMessage());
+            delegate.onError(t);
         }
     }
 }
