@@ -49,6 +49,7 @@ public class LocalFileStorageServiceImpl implements FileStorageService {
         Assert.notBlank(bucketName, "bucketName 不能为空");
         Assert.isFalse(file == null || file.isEmpty(), "上传文件不能为空");
 
+        String safeBucket = toS3BucketName(bucketName);
         String originalFilename = file.getOriginalFilename();
         long size = file.getSize();
 
@@ -58,7 +59,7 @@ public class LocalFileStorageServiceImpl implements FileStorageService {
         }
 
         try (InputStream uploadIs = file.getInputStream()) {
-            return uploadInternal(bucketName, uploadIs, size, originalFilename, detected);
+            return uploadInternal(safeBucket, uploadIs, size, originalFilename, detected);
         }
     }
 
@@ -66,11 +67,12 @@ public class LocalFileStorageServiceImpl implements FileStorageService {
     public StoredFileDTO upload(String bucketName, byte[] content, String originalFilename, String contentType) {
         Assert.notBlank(bucketName, "bucketName 不能为空");
         Assert.notNull(content, "上传内容不能为空");
+        String safeBucket = toS3BucketName(bucketName);
         String detected = contentType;
         if (detected == null || detected.isBlank()) {
             detected = TIKA.detect(content, originalFilename);
         }
-        return uploadInternal(bucketName, new java.io.ByteArrayInputStream(content), content.length, originalFilename, detected);
+        return uploadInternal(safeBucket, new java.io.ByteArrayInputStream(content), content.length, originalFilename, detected);
     }
 
     @Override
@@ -153,6 +155,14 @@ public class LocalFileStorageServiceImpl implements FileStorageService {
             return "";
         }
         return filename.substring(idx + 1).trim();
+    }
+
+    /**
+     * 将 collectionName 转为 S3 合法的 bucket 名称
+     * S3 规范：只允许小写字母、数字和短横线，不允许下划线和大写字母
+     */
+    private String toS3BucketName(String name) {
+        return name.toLowerCase().replace('_', '-');
     }
 
 }

@@ -425,7 +425,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       {
         url,
         headers: token ? { Authorization: token } : undefined,
-        retryCount: 1
+        retryCount: 0
       },
       handlers
     );
@@ -451,14 +451,21 @@ export const useChatStore = create<ChatState>((set, get) => ({
       }
     }
   },
-  cancelGeneration: () => {
-    const { isStreaming, streamTaskId } = get();
-    if (!isStreaming) return;
-    set({ cancelRequested: true });
-    if (streamTaskId) {
-      stopTask(streamTaskId).catch(() => null);
-    }
-  },
+  cancelGeneration: (() => {
+    let lastCallTime = 0;
+    return () => {
+      const now = Date.now();
+      if (now - lastCallTime < 2000) return;
+      lastCallTime = now;
+
+      const { isStreaming, streamTaskId } = get();
+      if (!isStreaming) return;
+      set({ cancelRequested: true });
+      if (streamTaskId) {
+        stopTask(streamTaskId).catch(() => null);
+      }
+    };
+  })(),
   appendStreamContent: (delta) => {
     if (!delta) return;
     set((state) => {
