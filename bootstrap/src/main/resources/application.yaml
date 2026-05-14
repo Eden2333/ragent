@@ -179,3 +179,7 @@ sa-token:
 
 app:
   demo-mode: false
+
+logging:
+  level:
+    com.nageoffer.ai.ragent.infra.chat.RoutingLLMService: DEBUG
