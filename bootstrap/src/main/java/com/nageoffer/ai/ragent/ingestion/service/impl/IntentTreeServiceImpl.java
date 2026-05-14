@@ -18,6 +18,7 @@
 package com.nageoffer.ai.ragent.ingestion.service.impl;
 
 import cn.hutool.core.bean.BeanUtil;
+import cn.hutool.core.collection.CollUtil;
 import cn.hutool.core.lang.Assert;
 import cn.hutool.core.util.StrUtil;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
@@ -35,10 +36,12 @@ import com.nageoffer.ai.ragent.framework.context.UserContext;
 import com.nageoffer.ai.ragent.framework.exception.ClientException;
 import com.nageoffer.ai.ragent.framework.exception.ServiceException;
 import com.nageoffer.ai.ragent.rag.core.intent.IntentNode;
+import com.nageoffer.ai.ragent.rag.core.intent.IntentEmbeddingIndexer;
 import com.nageoffer.ai.ragent.rag.core.intent.IntentTreeCacheManager;
 import com.nageoffer.ai.ragent.rag.core.intent.IntentTreeFactory;
 import com.nageoffer.ai.ragent.ingestion.service.IntentTreeService;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.collections4.CollectionUtils;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -55,14 +58,35 @@ import java.util.stream.Collectors;
 
 import static com.nageoffer.ai.ragent.rag.enums.IntentLevel.DOMAIN;
 
+@Slf4j
 @Service
 @RequiredArgsConstructor
 public class IntentTreeServiceImpl extends ServiceImpl<IntentNodeMapper, IntentNodeDO> implements IntentTreeService {
 
     private final KnowledgeBaseMapper knowledgeBaseMapper;
     private final IntentTreeCacheManager intentTreeCacheManager;
+    private final IntentEmbeddingIndexer intentEmbeddingIndexer;
 
     private static final Gson GSON = new Gson();
+
+    /**
+     * 异步重建意图向量索引
+     * 在意图节点变更后调用，确保向量索引与数据库保持一致
+     */
+    private void rebuildIntentEmbeddingIndex() {
+        try {
+            List<IntentNode> roots = intentTreeCacheManager.getIntentTreeFromCache();
+            if (CollUtil.isEmpty(roots)) {
+                return;
+            }
+            List<IntentNode> leafNodes = flatten(roots).stream()
+                    .filter(IntentNode::isLeaf)
+                    .collect(Collectors.toList());
+            intentEmbeddingIndexer.rebuildIndex(leafNodes);
+        } catch (Exception e) {
+            log.warn("意图向量索引重建失败，不影响主流程", e);
+        }
+    }
 
     @Override
     public List<IntentNodeTreeVO> getFullTree() {
@@ -158,6 +182,7 @@ public class IntentTreeServiceImpl extends ServiceImpl<IntentNodeMapper, IntentN
 
         // 清除Redis缓存，下次读取时会重新从数据库加载
         intentTreeCacheManager.clearIntentTreeCache();
+        rebuildIntentEmbeddingIndex();
 
         return String.valueOf(node.getId());
     }
@@ -204,6 +229,7 @@ public class IntentTreeServiceImpl extends ServiceImpl<IntentNodeMapper, IntentN
 
         // 清除Redis缓存，下次读取时会重新从数据库加载
         intentTreeCacheManager.clearIntentTreeCache();
+        rebuildIntentEmbeddingIndex();
     }
 
     @Override
@@ -212,6 +238,7 @@ public class IntentTreeServiceImpl extends ServiceImpl<IntentNodeMapper, IntentN
 
         // 清除Redis缓存，下次读取时会重新从数据库加载
         intentTreeCacheManager.clearIntentTreeCache();
+        rebuildIntentEmbeddingIndex();
     }
 
     @Override
@@ -225,6 +252,7 @@ public class IntentTreeServiceImpl extends ServiceImpl<IntentNodeMapper, IntentN
         });
         this.updateBatchById(targetNodes);
         intentTreeCacheManager.clearIntentTreeCache();
+        rebuildIntentEmbeddingIndex();
     }
 
     @Override
@@ -256,6 +284,7 @@ public class IntentTreeServiceImpl extends ServiceImpl<IntentNodeMapper, IntentN
         });
         this.updateBatchById(targetNodes);
         intentTreeCacheManager.clearIntentTreeCache();
+        rebuildIntentEmbeddingIndex();
     }
 
     @Override
@@ -294,6 +323,7 @@ public class IntentTreeServiceImpl extends ServiceImpl<IntentNodeMapper, IntentN
         }
         this.removeByIds(targetIdSet);
         intentTreeCacheManager.clearIntentTreeCache();
+        rebuildIntentEmbeddingIndex();
     }
 
     @Override

@@ -44,7 +44,7 @@ import static com.nageoffer.ai.ragent.rag.enums.IntentKind.SYSTEM;
 @RequiredArgsConstructor
 public class IntentResolver {
 
-    @Qualifier("defaultIntentClassifier")
+    @Qualifier("semanticIntentClassifier")
     private final IntentClassifier intentClassifier;
     @Qualifier("intentClassifyThreadPoolExecutor")
     private final Executor intentClassifyExecutor;
