@@ -38,6 +38,7 @@ import com.nageoffer.ai.ragent.rag.core.prompt.PromptTemplateLoader;
 import com.nageoffer.ai.ragent.rag.service.ConversationService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -105,14 +106,15 @@ public class ConversationServiceImpl implements ConversationService {
         );
 
         if (existing == null) {
-            String title = generateTitleFromQuestion(question);
             ConversationDO record = ConversationDO.builder()
                     .conversationId(conversationId)
                     .userId(userId)
-                    .title(title)
+                    .title("新对话")
                     .lastTime(request.getLastTime())
                     .build();
             conversationMapper.insert(record);
+            // 异步生成标题，不阻塞主对话流程
+            generateTitleAsync(conversationId, userId, question);
             return;
         }
 
@@ -181,6 +183,29 @@ public class ConversationServiceImpl implements ConversationService {
                         .eq(ConversationSummaryDO::getUserId, userId)
                         .eq(ConversationSummaryDO::getDeleted, 0)
         );
+    }
+
+    /**
+     * 异步生成会话标题并更新数据库
+     */
+    @Async
+    public void generateTitleAsync(String conversationId, String userId, String question) {
+        try {
+            String title = generateTitleFromQuestion(question);
+            ConversationDO record = conversationMapper.selectOne(
+                    Wrappers.lambdaQuery(ConversationDO.class)
+                            .eq(ConversationDO::getConversationId, conversationId)
+                            .eq(ConversationDO::getUserId, userId)
+                            .eq(ConversationDO::getDeleted, 0)
+            );
+            if (record != null) {
+                record.setTitle(title);
+                conversationMapper.updateById(record);
+                log.info("异步标题生成完成，会话ID: {}, 标题: {}", conversationId, title);
+            }
+        } catch (Exception e) {
+            log.warn("异步标题生成失败，会话ID: {}", conversationId, e);
+        }
     }
 
     private String generateTitleFromQuestion(String question) {

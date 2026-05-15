@@ -76,6 +76,12 @@ public class MultiQuestionRewriteService implements QueryRewriteService {
 
         String normalizedQuestion = queryTermMappingService.normalize(userQuestion);
 
+        // 短问题（10个字以内）且无多轮历史时，跳过 LLM 改写，直接使用归一化结果
+        if (normalizedQuestion.length() <= 10 && (CollUtil.isEmpty(history) || history.size() <= 1)) {
+            log.info("短问题跳过 LLM 改写：{}", normalizedQuestion);
+            return new RewriteResult(normalizedQuestion, List.of(normalizedQuestion));
+        }
+
         return callLLMRewriteAndSplit(normalizedQuestion, userQuestion, history);
     }
 

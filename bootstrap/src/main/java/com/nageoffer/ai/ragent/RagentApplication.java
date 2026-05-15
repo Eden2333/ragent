@@ -20,12 +20,14 @@ package com.nageoffer.ai.ragent;
 import org.mybatis.spring.annotation.MapperScan;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
+import org.springframework.scheduling.annotation.EnableAsync;
 import org.springframework.scheduling.annotation.EnableScheduling;
 
 /**
  * Ragent 核心应用启动类
  */
 @SpringBootApplication
+@EnableAsync
 @EnableScheduling
 @MapperScan(basePackages = {
         "com.nageoffer.ai.ragent.rag.dao.mapper",
