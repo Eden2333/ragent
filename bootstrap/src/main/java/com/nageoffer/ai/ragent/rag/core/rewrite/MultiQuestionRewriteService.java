@@ -159,6 +159,7 @@ public class MultiQuestionRewriteService implements QueryRewriteService {
                 .temperature(0.1D)
                 .topP(0.3D)
                 .thinking(false)
+                .modelId("qwen3-local-light")
                 .build();
     }
 

@@ -53,6 +53,24 @@ public class ModelSelector {
         return selectCandidates(group, firstChoiceModelId, deepThinking);
     }
 
+    /**
+     * 选择聊天模型候选列表，支持指定首选模型 ID
+     *
+     * @param deepThinking 是否深度思考模式
+     * @param preferredModelId 指定的首选模型 ID，优先级高于 default-model
+     */
+    public List<ModelTarget> selectChatCandidates(Boolean deepThinking, String preferredModelId) {
+        AIModelProperties.ModelGroup group = properties.getChat();
+        if (group == null) {
+            return List.of();
+        }
+
+        String firstChoiceModelId = StrUtil.isNotBlank(preferredModelId)
+                ? preferredModelId
+                : resolveFirstChoiceModel(group, deepThinking);
+        return selectCandidates(group, firstChoiceModelId, deepThinking);
+    }
+
     public List<ModelTarget> selectEmbeddingCandidates() {
         return selectCandidates(properties.getEmbedding());
     }

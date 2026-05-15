@@ -201,6 +201,7 @@ public class DefaultIntentClassifier implements IntentClassifier, IntentNodeRegi
                 .temperature(0.1D)
                 .topP(0.3D)
                 .thinking(false)
+                .modelId("qwen3-local-light")
                 .build();
 
         String raw = llmService.chat(request);
