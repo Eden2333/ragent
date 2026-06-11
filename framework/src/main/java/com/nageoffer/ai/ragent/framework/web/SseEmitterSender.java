@@ -22,10 +22,6 @@ import com.nageoffer.ai.ragent.framework.exception.ServiceException;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
-import java.util.concurrent.Executors;
-import java.util.concurrent.ScheduledExecutorService;
-import java.util.concurrent.ScheduledFuture;
-import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
@@ -36,21 +32,6 @@ import java.util.concurrent.atomic.AtomicBoolean;
  */
 @Slf4j
 public class SseEmitterSender {
-
-    /**
-     * 心跳间隔（秒）
-     */
-    private static final long HEARTBEAT_INTERVAL_SECONDS = 15;
-
-    /**
-     * 共享的心跳调度线程池
-     */
-    private static final ScheduledExecutorService HEARTBEAT_SCHEDULER =
-            Executors.newScheduledThreadPool(1, r -> {
-                Thread t = new Thread(r, "sse-heartbeat");
-                t.setDaemon(true);
-                return t;
-            });
 
     /**
      * Spring SSE 发送器实例
@@ -64,16 +45,10 @@ public class SseEmitterSender {
     private final AtomicBoolean closed = new AtomicBoolean(false);
 
     /**
-     * 心跳定时任务句柄
-     */
-    private volatile ScheduledFuture<?> heartbeatFuture;
-
-    /**
      * Spring 的 SseEmitter 实例，用于实际的 SSE 通信
      */
     public SseEmitterSender(SseEmitter emitter) {
         this.emitter = emitter;
-        startHeartbeat();
     }
 
     /**
@@ -116,7 +91,6 @@ public class SseEmitterSender {
     public void complete() {
         // 使用 CAS 原子操作，确保只关闭一次
         if (closed.compareAndSet(false, true)) {
-            stopHeartbeat();
             emitter.complete();
         }
     }
@@ -148,38 +122,7 @@ public class SseEmitterSender {
     private void closeWithError(Throwable throwable) {
         // 使用 CAS 原子操作，确保只关闭一次
         if (closed.compareAndSet(false, true)) {
-            stopHeartbeat();
             emitter.completeWithError(throwable);
-        }
-    }
-
-    /**
-     * 启动心跳定时任务
-     * <p>每隔固定间隔发送 SSE 注释（以 ":" 开头），保持连接活跃。
-     * SSE 规范中以冒号开头的行是注释，客户端会忽略但连接不会断开。</p>
-     */
-    private void startHeartbeat() {
-        heartbeatFuture = HEARTBEAT_SCHEDULER.scheduleAtFixedRate(() -> {
-            if (closed.get()) {
-                stopHeartbeat();
-                return;
-            }
-            try {
-                emitter.send(SseEmitter.event().comment("heartbeat"));
-            } catch (Exception e) {
-                // 心跳发送失败说明连接已断开，静默停止
-                stopHeartbeat();
-            }
-        }, HEARTBEAT_INTERVAL_SECONDS, HEARTBEAT_INTERVAL_SECONDS, TimeUnit.SECONDS);
-    }
-
-    /**
-     * 停止心跳定时任务
-     */
-    private void stopHeartbeat() {
-        ScheduledFuture<?> future = heartbeatFuture;
-        if (future != null && !future.isCancelled()) {
-            future.cancel(false);
         }
     }
 }

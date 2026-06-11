@@ -121,14 +121,4 @@ public class ChatRequest {
      * </p>
      */
     private Boolean enableTools;
-
-    /**
-     * 可选：指定使用的模型 ID
-     * <p>
-     * 当指定此字段时，路由层会优先使用该模型，跳过默认的优先级排序。
-     * 模型 ID 对应配置文件中 candidates 的 id 字段。
-     * 若为 null 则使用默认路由策略。
-     * </p>
-     */
-    private String modelId;
 }

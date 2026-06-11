@@ -17,30 +17,28 @@ spring:
     type: com.zaxxer.hikari.HikariDataSource
     username: root
     password: root
-    url: jdbc:mysql://${SERVER_HOST:127.0.0.1}:3306/ragent?characterEncoding=utf-8&zeroDateTimeBehavior=convertToNull&transformedBitIsBoolean=true&serverTimezone=GMT%2B8&allowPublicKeyRetrieval=true
+    url: jdbc:mysql://127.0.0.1:3306/ragent?characterEncoding=utf-8&zeroDateTimeBehavior=convertToNull&transformedBitIsBoolean=true&serverTimezone=GMT%2B8&allowPublicKeyRetrieval=true
     hikari:
-      connection-timeout: 10000
-      idle-timeout: 300000
-      max-lifetime: 600000
+      connection-timeout: 5000
+      idle-timeout: 600000
+      max-lifetime: 1800000
       maximum-pool-size: 10
-      minimum-idle: 2
+      minimum-idle: 5
       pool-name: RagentHikariPool
-      keepalive-time: 60000
-      connection-test-query: SELECT 1
 
   data:
     redis:
-      host: ${SERVER_HOST:127.0.0.1}
+      host: 127.0.0.1
       port: 6379
-      password: root
+      password: 123456
 
 milvus:
-  uri: http://${SERVER_HOST:127.0.0.1}:19530
+  uri: http://localhost:19530
 
 rag:
   default:
     collection-name: rag_default_store
-    dimension: 768
+    dimension: 4096
     metric-type: COSINE
 
   query-rewrite:
@@ -74,7 +72,7 @@ rag:
   mcp:
     servers:
       - name: default
-        url: http://${SERVER_HOST:127.0.0.1}:9099
+        url: http://localhost:9099
 
   search:
     channels:
@@ -92,7 +90,7 @@ rag:
 ai:
   providers:
     ollama:
-      url: http://${SERVER_HOST:127.0.0.1}:11434
+      url: http://localhost:11434
       endpoints:
         chat: /api/chat
         embedding: /api/embed
@@ -117,8 +115,8 @@ ai:
     message-chunk-size: 1
 
   chat:
-    default-model: qwen3-local
-    deep-thinking-model: qwen3-local
+    default-model: qwen3-max
+    deep-thinking-model: qwen3-max
     candidates:
       - id: qwen-plus
         provider: bailian
@@ -136,26 +134,22 @@ ai:
         priority: 0
       - id: qwen3-local
         provider: ollama
-        model: qwen2.5:7b-instruct
+        model: qwen3:8b-fp16
         priority: 2
-      - id: qwen3-local-light
-        provider: ollama
-        model: qwen2.5:3b-instruct
-        priority: 10
 
   embedding:
-    default-model: nomic-emb-local
+    default-model: qwen-emb-8b
     candidates:
       - id: qwen-emb-8b
         provider: siliconflow
         model: Qwen/Qwen3-Embedding-8B
         dimension: 4096
-        priority: 2
-      - id: nomic-emb-local
-        provider: ollama
-        model: nomic-embed-text:latest
-        dimension: 768
         priority: 1
+      - id: qwen-emb-local
+        provider: ollama
+        model: qwen3-embedding:8b-fp16
+        dimension: 4096
+        priority: 2
 
   rerank:
     default-model: qwen3-rerank
@@ -170,7 +164,7 @@ ai:
         priority: 100
 
 rustfs:
-  url: http://${SERVER_HOST:127.0.0.1}:9000
+  url: http://localhost:9000
   access-key-id: rustfsadmin
   secret-access-key: rustfsadmin
 
@@ -185,7 +179,3 @@ sa-token:
 
 app:
   demo-mode: false
-
-logging:
-  level:
-    com.nageoffer.ai.ragent.infra.chat.RoutingLLMService: DEBUG

@@ -62,14 +62,11 @@ public class DefaultIntentClassifier implements IntentClassifier, IntentNodeRegi
     private final IntentNodeMapper intentNodeMapper;
     private final PromptTemplateLoader promptTemplateLoader;
     private final IntentTreeCacheManager intentTreeCacheManager;
-    private final IntentEmbeddingIndexer intentEmbeddingIndexer;
 
     @PostConstruct
     public void init() {
         // 初始化时确保Redis缓存存在
         ensureIntentTreeCached();
-        // 初始化时确保向量索引存在
-        ensureIntentEmbeddingIndexed();
         log.info("意图分类器初始化完成");
     }
 
@@ -84,35 +81,6 @@ public class DefaultIntentClassifier implements IntentClassifier, IntentNodeRegi
                 intentTreeCacheManager.saveIntentTreeToCache(roots);
                 log.info("意图树已从数据库加载并缓存到Redis");
             }
-        }
-    }
-
-    /**
-     * 确保意图向量索引存在
-     * 如果索引不存在，从缓存加载意图树并构建索引
-     */
-    private void ensureIntentEmbeddingIndexed() {
-        if (intentEmbeddingIndexer.collectionExists()) {
-            log.info("意图向量索引已存在，跳过初始化");
-            return;
-        }
-        try {
-            List<IntentNode> roots = intentTreeCacheManager.getIntentTreeFromCache();
-            if (CollUtil.isEmpty(roots)) {
-                log.info("意图树为空，跳过向量索引初始化");
-                return;
-            }
-            List<IntentNode> leafNodes = flatten(roots).stream()
-                    .filter(IntentNode::isLeaf)
-                    .collect(Collectors.toList());
-            if (leafNodes.isEmpty()) {
-                log.info("无叶子意图节点，跳过向量索引初始化");
-                return;
-            }
-            intentEmbeddingIndexer.rebuildIndex(leafNodes);
-            log.info("意图向量索引初始化完成，叶子节点数: {}", leafNodes.size());
-        } catch (Exception e) {
-            log.warn("意图向量索引初始化失败，将降级到 LLM 分类", e);
         }
     }
 
@@ -201,7 +169,6 @@ public class DefaultIntentClassifier implements IntentClassifier, IntentNodeRegi
                 .temperature(0.1D)
                 .topP(0.3D)
                 .thinking(false)
-                .modelId("qwen3-local-light")
                 .build();
 
         String raw = llmService.chat(request);
