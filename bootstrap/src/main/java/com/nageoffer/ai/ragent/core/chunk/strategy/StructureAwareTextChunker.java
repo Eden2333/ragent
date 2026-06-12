@@ -88,6 +88,9 @@ public class StructureAwareTextChunker extends AbstractEmbeddingChunker {
     protected List<VectorChunk> doChunk(String text, ChunkingOptions config) {
         if (StrUtil.isBlank(text)) return List.of();
 
+        // 归一化行尾：将 \r\n 统一为 \n，确保后续下标一致
+        text = text.replace("\r\n", "\n").replace("\r", "\n");
+
         int effectiveTarget = config == null ? targetChars : config.getMetadata("targetChars", targetChars);
         int effectiveMax = config == null ? maxChars : config.getMetadata("maxChars", maxChars);
         int effectiveMin = config == null ? minChars : config.getMetadata("minChars", minChars);
