@@ -124,4 +124,20 @@ public class MilvusVectorStoreAdmin implements VectorStoreAdmin {
                 HasCollectionReq.builder().collectionName(logicalName).build()
         );
     }
+
+    @Override
+    public void deleteVectorSpace(VectorSpaceId spaceId) {
+        String logicalName = spaceId.getLogicalName();
+        boolean exists = milvusClient.hasCollection(
+                HasCollectionReq.builder().collectionName(logicalName).build()
+        );
+        if (exists) {
+            milvusClient.dropCollection(
+                    io.milvus.v2.service.collection.request.DropCollectionReq.builder()
+                            .collectionName(logicalName)
+                            .build()
+            );
+            log.info("成功删除Milvus向量空间，Collection: {}", logicalName);
+        }
+    }
 }

@@ -41,7 +41,6 @@ import com.nageoffer.ai.ragent.knowledge.service.KnowledgeBaseService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
 import software.amazon.awssdk.services.s3.S3Client;
 import software.amazon.awssdk.services.s3.model.BucketAlreadyExistsException;
@@ -63,7 +62,6 @@ public class KnowledgeBaseServiceImpl implements KnowledgeBaseService {
     private final VectorStoreAdmin vectorStoreAdmin;
     private final S3Client s3Client;
 
-    @Transactional
     @Override
     public String create(KnowledgeBaseCreateRequest requestParam) {
         // 名称重复校验
@@ -77,17 +75,7 @@ public class KnowledgeBaseServiceImpl implements KnowledgeBaseService {
             throw new ServiceException("知识库名称已存在：" + requestParam.getName());
         }
 
-        KnowledgeBaseDO kbDO = KnowledgeBaseDO.builder()
-                .name(requestParam.getName())
-                .embeddingModel(requestParam.getEmbeddingModel())
-                .collectionName(requestParam.getCollectionName())
-                .createdBy(UserContext.getUsername())
-                .updatedBy(UserContext.getUsername())
-                .deleted(0)
-                .build();
-
-        knowledgeBaseMapper.insert(kbDO);
-
+        // 1. 创建 S3 bucket（外部资源优先）
         // S3 bucket 命名不允许下划线，将下划线转为中划线
         String bucketName = requestParam.getCollectionName().replace("_", "-");
         try {
@@ -102,13 +90,52 @@ public class KnowledgeBaseServiceImpl implements KnowledgeBaseService {
             throw new ServiceException("存储桶名称已被占用：" + bucketName);
         }
 
+        // 2. 创建 Milvus 向量空间，失败则补偿删除已创建的 bucket
         VectorSpaceSpec spaceSpec = VectorSpaceSpec.builder()
                 .spaceId(VectorSpaceId.builder()
                         .logicalName(requestParam.getCollectionName())
                         .build())
                 .remark(requestParam.getName())
                 .build();
-        vectorStoreAdmin.ensureVectorSpace(spaceSpec);
+        try {
+            vectorStoreAdmin.ensureVectorSpace(spaceSpec);
+        } catch (Exception e) {
+            log.error("创建向量空间失败，开始补偿删除S3存储桶，Bucket名称: {}", bucketName, e);
+            try {
+                s3Client.deleteBucket(builder -> builder.bucket(bucketName));
+                log.info("补偿删除S3存储桶成功，Bucket名称: {}", bucketName);
+            } catch (Exception s3Ex) {
+                log.error("补偿删除S3存储桶失败，需人工清理，Bucket名称: {}", bucketName, s3Ex);
+            }
+            throw new ServiceException("创建向量空间失败：" + e.getMessage());
+        }
+
+        // 3. 最后写入 MySQL，失败则补偿清理外部资源
+        KnowledgeBaseDO kbDO = KnowledgeBaseDO.builder()
+                .name(requestParam.getName())
+                .embeddingModel(requestParam.getEmbeddingModel())
+                .collectionName(requestParam.getCollectionName())
+                .createdBy(UserContext.getUsername())
+                .updatedBy(UserContext.getUsername())
+                .deleted(0)
+                .build();
+
+        try {
+            knowledgeBaseMapper.insert(kbDO);
+        } catch (Exception e) {
+            log.error("MySQL插入知识库记录失败，开始补偿清理外部资源", e);
+            try {
+                s3Client.deleteBucket(builder -> builder.bucket(bucketName));
+            } catch (Exception s3Ex) {
+                log.error("补偿删除S3存储桶失败，需人工清理，Bucket名称: {}", bucketName, s3Ex);
+            }
+            try {
+                vectorStoreAdmin.deleteVectorSpace(spaceSpec.getSpaceId());
+            } catch (Exception vecEx) {
+                log.error("补偿删除向量空间失败，需人工清理，Collection: {}", requestParam.getCollectionName(), vecEx);
+            }
+            throw new ServiceException("创建知识库失败：" + e.getMessage());
+        }
 
         return String.valueOf(kbDO.getId());
     }
@@ -176,6 +203,11 @@ public class KnowledgeBaseServiceImpl implements KnowledgeBaseService {
 
     @Override
     public void delete(String kbId) {
+        KnowledgeBaseDO kb = knowledgeBaseMapper.selectById(kbId);
+        if (kb == null || kb.getDeleted() != null && kb.getDeleted() == 1) {
+            throw new ClientException("知识库不存在");
+        }
+
         // 限制删除前需要确保没有文档
         Long docCount = knowledgeDocumentMapper.selectCount(
                 Wrappers.lambdaQuery(KnowledgeDocumentDO.class)
@@ -186,6 +218,26 @@ public class KnowledgeBaseServiceImpl implements KnowledgeBaseService {
             throw new ClientException("知识库下仍有关联文档，无法删除");
         }
 
+        // 先删除外部资源，最后删除 MySQL 记录
+        // 删除 S3 bucket
+        String bucketName = kb.getCollectionName().replace("_", "-");
+        try {
+            s3Client.deleteBucket(builder -> builder.bucket(bucketName));
+            log.info("成功删除S3存储桶，Bucket名称: {}", bucketName);
+        } catch (Exception e) {
+            log.error("删除S3存储桶失败，需人工清理，Bucket名称: {}", bucketName, e);
+        }
+
+        // 删除 Milvus 向量空间
+        try {
+            vectorStoreAdmin.deleteVectorSpace(
+                    VectorSpaceId.builder().logicalName(kb.getCollectionName()).build()
+            );
+        } catch (Exception e) {
+            log.error("删除Milvus向量空间失败，需人工清理，Collection: {}", kb.getCollectionName(), e);
+        }
+
+        // 最后删除 MySQL 记录
         knowledgeBaseMapper.deleteById(kbId);
     }
 
