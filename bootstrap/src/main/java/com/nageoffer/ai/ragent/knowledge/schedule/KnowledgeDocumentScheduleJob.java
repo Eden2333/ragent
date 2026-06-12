@@ -209,7 +209,7 @@ public class KnowledgeDocumentScheduleJob {
             }
 
             StoredFileDTO stored = fileStorageService.upload(
-                    kbDO.getCollectionName(),
+                    kbDO.getCollectionName().replace("_", "-"),
                     fetchResult.body(),
                     fetchResult.fileName(),
                     fetchResult.contentType()

@@ -88,7 +88,8 @@ public class KnowledgeBaseServiceImpl implements KnowledgeBaseService {
 
         knowledgeBaseMapper.insert(kbDO);
 
-        String bucketName = requestParam.getCollectionName();
+        // S3 bucket 命名不允许下划线，将下划线转为中划线
+        String bucketName = requestParam.getCollectionName().replace("_", "-");
         try {
             s3Client.createBucket(builder -> builder.bucket(bucketName));
             log.info("成功创建RestFS存储桶，Bucket名称: {}", bucketName);

@@ -38,7 +38,7 @@ milvus:
 rag:
   default:
     collection-name: rag_default_store
-    dimension: 4096
+    dimension: 1024
     metric-type: COSINE
 
   query-rewrite:
@@ -138,12 +138,12 @@ ai:
         priority: 2
 
   embedding:
-    default-model: qwen-emb-8b
+    default-model: text-embedding-v4
     candidates:
-      - id: qwen-emb-8b
-        provider: siliconflow
-        model: Qwen/Qwen3-Embedding-8B
-        dimension: 4096
+      - id: text-embedding-v4
+        provider: aliyun-bailian
+        model: text-embedding-v4
+        dimension: 1024
         priority: 1
       - id: qwen-emb-local
         provider: ollama

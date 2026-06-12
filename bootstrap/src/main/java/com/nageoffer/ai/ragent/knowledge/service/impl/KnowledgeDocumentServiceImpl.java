@@ -748,14 +748,16 @@ public class KnowledgeDocumentServiceImpl implements KnowledgeDocumentService {
     }
 
     private StoredFileDTO resolveStoredFile(String bucketName, SourceType sourceType, String sourceLocation, MultipartFile file) {
+        // S3 bucket 命名不允许下划线，将下划线转为中划线
+        String s3BucketName = bucketName.replace("_", "-");
         if (SourceType.FILE == sourceType) {
             Assert.notNull(file, () -> new ClientException("上传文件不能为空"));
-            return fileStorageService.upload(bucketName, file);
+            return fileStorageService.upload(s3BucketName, file);
         }
 
         HttpClientHelper.HttpFetchResponse response = httpClientHelper.get(sourceLocation, Map.of());
         String fileName = StringUtils.hasText(response.fileName()) ? response.fileName() : "remote-file";
-        return fileStorageService.upload(bucketName, response.body(), fileName, response.contentType());
+        return fileStorageService.upload(s3BucketName, response.body(), fileName, response.contentType());
     }
 
     private ChunkingMode resolveChunkingMode(String mode) {
