@@ -110,8 +110,9 @@ public class KnowledgeBaseServiceImpl implements KnowledgeBaseService {
             throw new ServiceException("创建向量空间失败：" + e.getMessage());
         }
 
-        // 3. 最后写入 MySQL，失败则补偿清理外部资源
+        // 3. 写入 MySQL，失败则补偿清理外部资源
         KnowledgeBaseDO kbDO = KnowledgeBaseDO.builder()
+                .id(cn.hutool.core.util.IdUtil.getSnowflakeNextId())
                 .name(requestParam.getName())
                 .embeddingModel(requestParam.getEmbeddingModel())
                 .collectionName(requestParam.getCollectionName())
@@ -121,19 +122,10 @@ public class KnowledgeBaseServiceImpl implements KnowledgeBaseService {
                 .build();
 
         try {
-            knowledgeBaseMapper.insert(kbDO);
+            knowledgeBaseMapper.insertOrRestore(kbDO);
         } catch (Exception e) {
             log.error("MySQL插入知识库记录失败，开始补偿清理外部资源", e);
-            try {
-                s3Client.deleteBucket(builder -> builder.bucket(bucketName));
-            } catch (Exception s3Ex) {
-                log.error("补偿删除S3存储桶失败，需人工清理，Bucket名称: {}", bucketName, s3Ex);
-            }
-            try {
-                vectorStoreAdmin.deleteVectorSpace(spaceSpec.getSpaceId());
-            } catch (Exception vecEx) {
-                log.error("补偿删除向量空间失败，需人工清理，Collection: {}", requestParam.getCollectionName(), vecEx);
-            }
+            compensateExternalResources(bucketName, spaceSpec, requestParam.getCollectionName());
             throw new ServiceException("创建知识库失败：" + e.getMessage());
         }
 
@@ -239,6 +231,19 @@ public class KnowledgeBaseServiceImpl implements KnowledgeBaseService {
 
         // 最后删除 MySQL 记录
         knowledgeBaseMapper.deleteById(kbId);
+    }
+
+    private void compensateExternalResources(String bucketName, VectorSpaceSpec spaceSpec, String collectionName) {
+        try {
+            s3Client.deleteBucket(builder -> builder.bucket(bucketName));
+        } catch (Exception s3Ex) {
+            log.error("补偿删除S3存储桶失败，需人工清理，Bucket名称: {}", bucketName, s3Ex);
+        }
+        try {
+            vectorStoreAdmin.deleteVectorSpace(spaceSpec.getSpaceId());
+        } catch (Exception vecEx) {
+            log.error("补偿删除向量空间失败，需人工清理，Collection: {}", collectionName, vecEx);
+        }
     }
 
     @Override

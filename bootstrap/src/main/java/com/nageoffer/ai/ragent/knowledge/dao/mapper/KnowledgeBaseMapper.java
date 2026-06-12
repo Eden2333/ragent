@@ -19,6 +19,17 @@ package com.nageoffer.ai.ragent.knowledge.dao.mapper;
 
 import com.baomidou.mybatisplus.core.mapper.BaseMapper;
 import com.nageoffer.ai.ragent.knowledge.dao.entity.KnowledgeBaseDO;
+import org.apache.ibatis.annotations.Param;
+import org.apache.ibatis.annotations.Insert;
 
 public interface KnowledgeBaseMapper extends BaseMapper<KnowledgeBaseDO> {
+
+    /**
+     * 插入知识库记录，若 collection_name 唯一索引冲突则恢复逻辑删除并更新字段
+     */
+    @Insert("INSERT INTO t_knowledge_base (id, name, embedding_model, collection_name, created_by, updated_by, deleted) " +
+            "VALUES (#{kb.id}, #{kb.name}, #{kb.embeddingModel}, #{kb.collectionName}, #{kb.createdBy}, #{kb.updatedBy}, 0) " +
+            "ON DUPLICATE KEY UPDATE name = VALUES(name), embedding_model = VALUES(embedding_model), " +
+            "created_by = VALUES(created_by), updated_by = VALUES(updated_by), deleted = 0")
+    int insertOrRestore(@Param("kb") KnowledgeBaseDO kb);
 }

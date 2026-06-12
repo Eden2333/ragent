@@ -25,6 +25,7 @@ import com.nageoffer.ai.ragent.core.chunk.VectorChunk;
 import com.nageoffer.ai.ragent.knowledge.dao.entity.KnowledgeBaseDO;
 import com.nageoffer.ai.ragent.knowledge.dao.mapper.KnowledgeBaseMapper;
 import com.nageoffer.ai.ragent.framework.exception.ClientException;
+import com.nageoffer.ai.ragent.rag.config.RAGDefaultProperties;
 import io.milvus.v2.client.MilvusClientV2;
 import io.milvus.v2.service.vector.request.DeleteReq;
 import io.milvus.v2.service.vector.request.InsertReq;
@@ -46,6 +47,7 @@ public class MilvusVectorStoreService implements VectorStoreService {
 
     private final MilvusClientV2 milvusClient;
     private final KnowledgeBaseMapper kbMapper;
+    private final RAGDefaultProperties ragDefaultProperties;
 
     @Override
     public void indexDocumentChunks(String kbId, String docId, List<VectorChunk> chunks) {
@@ -55,7 +57,7 @@ public class MilvusVectorStoreService implements VectorStoreService {
         Assert.isFalse(kbDO == null, () -> new ClientException("知识库不存在"));
 
         // 维度校验（你的 schema dim=4096）
-        final int dim = 4096;
+        final int dim = ragDefaultProperties.getDimension();
         List<float[]> vectors = extractVectors(chunks, dim);
 
         List<JsonObject> rows = new ArrayList<>(chunks.size());
@@ -99,7 +101,7 @@ public class MilvusVectorStoreService implements VectorStoreService {
         Assert.isFalse(kbDO == null, () -> new ClientException("知识库不存在"));
 
         // 维度校验
-        final int dim = 4096;
+        final int dim = ragDefaultProperties.getDimension();
         float[] vector = extractVector(chunk, dim);
 
         String chunkPk = chunk.getChunkId() != null ? chunk.getChunkId() : IdUtil.getSnowflakeNextIdStr();
