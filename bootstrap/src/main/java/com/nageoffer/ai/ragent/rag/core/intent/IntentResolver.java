@@ -19,6 +19,7 @@ package com.nageoffer.ai.ragent.rag.core.intent;
 
 import cn.hutool.core.collection.CollUtil;
 import cn.hutool.core.util.StrUtil;
+import cn.hutool.json.JSONUtil;
 import com.nageoffer.ai.ragent.rag.dto.IntentCandidate;
 import com.nageoffer.ai.ragent.rag.dto.IntentGroup;
 import com.nageoffer.ai.ragent.rag.dto.SubQuestionIntent;
@@ -26,6 +27,7 @@ import com.nageoffer.ai.ragent.rag.enums.IntentKind;
 import com.nageoffer.ai.ragent.framework.trace.RagTraceNode;
 import com.nageoffer.ai.ragent.rag.core.rewrite.RewriteResult;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Service;
 
@@ -35,6 +37,7 @@ import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executor;
+import java.util.stream.Collectors;
 
 import static com.nageoffer.ai.ragent.rag.constant.RAGConstant.INTENT_MIN_SCORE;
 import static com.nageoffer.ai.ragent.rag.constant.RAGConstant.MAX_INTENT_COUNT;
@@ -42,6 +45,7 @@ import static com.nageoffer.ai.ragent.rag.enums.IntentKind.SYSTEM;
 
 @Service
 @RequiredArgsConstructor
+@Slf4j
 public class IntentResolver {
 
     @Qualifier("defaultIntentClassifier")
@@ -84,6 +88,15 @@ public class IntentResolver {
 
     private List<NodeScore> classifyIntents(String question) {
         List<NodeScore> scores = intentClassifier.classifyTargets(question);
+        log.info("当前问题：{}\n意图识别树如下所示：{}\n",
+                question,
+                JSONUtil.toJsonPrettyStr(
+                        scores.stream().peek(each -> {
+                            IntentNode node = each.getNode();
+                            node.setChildren(null);
+                        }).collect(Collectors.toList())
+                )
+        );
         return scores.stream()
                 .filter(ns -> ns.getScore() >= INTENT_MIN_SCORE)
                 .limit(MAX_INTENT_COUNT)

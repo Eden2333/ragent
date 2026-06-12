@@ -74,6 +74,7 @@ public class MultiQuestionRewriteService implements QueryRewriteService {
             return new RewriteResult(normalized, subs);
         }
 
+        // 对用户表述进行专业替换
         String normalizedQuestion = queryTermMappingService.normalize(userQuestion);
 
         return callLLMRewriteAndSplit(normalizedQuestion, userQuestion, history);
@@ -97,6 +98,7 @@ public class MultiQuestionRewriteService implements QueryRewriteService {
         // 兜底：使用归一化结果 + 规则拆分
     }
 
+    // 调用 LLM 将用户问题拆分为多个子问题
     private RewriteResult callLLMRewriteAndSplit(String normalizedQuestion,
                                                  String originalQuestion,
                                                  List<ChatMessage> history) {

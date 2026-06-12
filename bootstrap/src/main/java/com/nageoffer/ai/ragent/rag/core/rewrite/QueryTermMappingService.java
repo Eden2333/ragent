@@ -57,6 +57,7 @@ public class QueryTermMappingService {
 
     /**
      * 对用户问题做术语归一化
+     * 使用 DB 中的术语替换
      */
     public String normalize(String text) {
         if (text == null || text.isEmpty() || cachedMappings.isEmpty()) {

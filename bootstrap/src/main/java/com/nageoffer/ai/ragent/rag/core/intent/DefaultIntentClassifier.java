@@ -112,7 +112,7 @@ public class DefaultIntentClassifier implements IntentClassifier, IntentNodeRegi
         Map<String, IntentNode> id2Node = allNodes.stream()
                 .collect(Collectors.toMap(IntentNode::getId, n -> n));
 
-        log.debug("意图树数据加载完成, 总节点数: {}, 叶子节点数: {}", allNodes.size(), leafNodes.size());
+//        log.debug("意图树数据加载完成, 总节点数: {}, 叶子节点数: {}", allNodes.size(), leafNodes.size());
 
         return new IntentTreeData(allNodes, leafNodes, id2Node);
     }
@@ -159,6 +159,7 @@ public class DefaultIntentClassifier implements IntentClassifier, IntentNodeRegi
     public List<NodeScore> classifyTargets(String question) {
         // 每次都从Redis读取最新数据
         IntentTreeData data = loadIntentTreeData();
+        log.debug("意图树数据加载完成, 总节点数: {}, 叶子节点数: {}", data.allNodes.size(), data.leafNodes.size());
 
         String systemPrompt = buildPrompt(data.leafNodes);
         ChatRequest request = ChatRequest.builder()
@@ -211,16 +212,6 @@ public class DefaultIntentClassifier implements IntentClassifier, IntentNodeRegi
 
             // 降序排序
             scores.sort(Comparator.comparingDouble(NodeScore::getScore).reversed());
-
-            log.info("当前问题：{}\n意图识别树如下所示：{}\n",
-                    question,
-                    JSONUtil.toJsonPrettyStr(
-                            scores.stream().peek(each -> {
-                                IntentNode node = each.getNode();
-                                node.setChildren(null);
-                            }).collect(Collectors.toList())
-                    )
-            );
             return scores;
         } catch (Exception e) {
             log.warn("解析 LLM 响应失败, 原始内容: {}", raw, e);

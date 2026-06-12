@@ -90,9 +90,13 @@ public class RAGChatServiceImpl implements RAGChatService {
         String userId = UserContext.getUserId();
         List<ChatMessage> history = memoryService.loadAndAppend(actualConversationId, userId, ChatMessage.user(question));
 
+        // 问题重写拆分，包括术语替换和调用LLM进行子问题拆分
         RewriteResult rewriteResult = queryRewriteService.rewriteWithSplit(question, history);
+
+        // 调用LLM为每个子问题进行意图打分
         List<SubQuestionIntent> subIntents = intentResolver.resolve(rewriteResult);
 
+        // 如果某个子问题存在多个得分相近的意图节点则引导用户澄清
         GuidanceDecision guidanceDecision = guidanceService.detectAmbiguity(rewriteResult.rewrittenQuestion(), subIntents);
         if (guidanceDecision.isPrompt()) {
             callback.onContent(guidanceDecision.getPrompt());
@@ -100,6 +104,7 @@ public class RAGChatServiceImpl implements RAGChatService {
             return;
         }
 
+        // 所有的意图节点都是 SYSTEM，则不调用MPC或KB，直接调用LLM 回答
         boolean allSystemOnly = subIntents.stream()
                 .allMatch(si -> intentResolver.isSystemOnly(si.nodeScores()));
         if (allSystemOnly) {
@@ -108,6 +113,7 @@ public class RAGChatServiceImpl implements RAGChatService {
             return;
         }
 
+        // 检索召回
         RetrievalContext ctx = retrievalEngine.retrieve(subIntents, DEFAULT_TOP_K);
         if (ctx.isEmpty()) {
             String emptyReply = "未检索到与问题相关的文档内容。";
@@ -119,6 +125,7 @@ public class RAGChatServiceImpl implements RAGChatService {
         // 聚合所有意图用于 prompt 规划
         IntentGroup mergedGroup = intentResolver.mergeIntentGroup(subIntents);
 
+        // 答案生成
         StreamCancellationHandle handle = streamLLMResponse(
                 rewriteResult,
                 ctx,
