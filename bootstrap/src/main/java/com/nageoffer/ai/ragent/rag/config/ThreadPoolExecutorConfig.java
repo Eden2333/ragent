@@ -210,4 +210,23 @@ public class ThreadPoolExecutorConfig {
         );
         return TtlExecutors.getTtlExecutor(executor);
     }
+
+    /**
+     * 会话标题生成线程池
+     */
+    @Bean
+    public Executor conversationTitleExecutor() {
+        ThreadPoolExecutor executor = new ThreadPoolExecutor(
+                1,
+                2,
+                60,
+                TimeUnit.SECONDS,
+                new LinkedBlockingQueue<>(100),
+                ThreadFactoryBuilder.create()
+                        .setNamePrefix("conversation_title_executor_")
+                        .build(),
+                new ThreadPoolExecutor.AbortPolicy()
+        );
+        return TtlExecutors.getTtlExecutor(executor);
+    }
 }
