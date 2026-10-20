@@ -38,11 +38,14 @@ import com.nageoffer.ai.ragent.rag.core.prompt.PromptTemplateLoader;
 import com.nageoffer.ai.ragent.rag.service.ConversationService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.Executor;
+import java.util.concurrent.RejectedExecutionException;
 import java.util.stream.Collectors;
 
 import static com.nageoffer.ai.ragent.rag.constant.RAGConstant.CONVERSATION_TITLE_PROMPT_PATH;
@@ -59,9 +62,13 @@ public class ConversationServiceImpl implements ConversationService {
     private final ConversationMapper conversationMapper;
     private final ConversationMessageMapper messageMapper;
     private final ConversationSummaryMapper summaryMapper;
+    private static final String DEFAULT_TITLE = "新对话";
+
     private final MemoryProperties memoryProperties;
     private final PromptTemplateLoader promptTemplateLoader;
     private final LLMService llmService;
+    @Qualifier("conversationTitleExecutor")
+    private final Executor conversationTitleExecutor;
 
     @Override
     public List<ConversationVO> listByUserId(String userId) {
@@ -105,14 +112,14 @@ public class ConversationServiceImpl implements ConversationService {
         );
 
         if (existing == null) {
-            String title = generateTitleFromQuestion(question);
             ConversationDO record = ConversationDO.builder()
                     .conversationId(conversationId)
                     .userId(userId)
-                    .title(title)
+                    .title(DEFAULT_TITLE)
                     .lastTime(request.getLastTime())
                     .build();
             conversationMapper.insert(record);
+            generateTitleAsync(conversationId, userId, question);
             return;
         }
 
@@ -183,20 +190,42 @@ public class ConversationServiceImpl implements ConversationService {
         );
     }
 
+    private void generateTitleAsync(String conversationId, String userId, String question) {
+        try {
+            conversationTitleExecutor.execute(() -> {
+                String title = generateTitleFromQuestion(question);
+                if (StrUtil.isBlank(title) || DEFAULT_TITLE.equals(title)) {
+                    return;
+                }
+                conversationMapper.update(
+                        null,
+                        Wrappers.lambdaUpdate(ConversationDO.class)
+                                .set(ConversationDO::getTitle, title.trim())
+                                .eq(ConversationDO::getConversationId, conversationId)
+                                .eq(ConversationDO::getUserId, userId)
+                                .eq(ConversationDO::getDeleted, 0)
+                                .eq(ConversationDO::getTitle, DEFAULT_TITLE)
+                );
+            });
+        } catch (RejectedExecutionException ex) {
+            log.warn("会话标题生成任务提交失败，conversationId={}", conversationId, ex);
+        }
+    }
+
     private String generateTitleFromQuestion(String question) {
         int maxLen = memoryProperties.getTitleMaxLength();
         if (maxLen <= 0) {
             maxLen = 30;
         }
-        String prompt = promptTemplateLoader.render(
-                CONVERSATION_TITLE_PROMPT_PATH,
-                Map.of(
-                        "title_max_chars", String.valueOf(maxLen),
-                        "question", question
-                )
-        );
 
         try {
+            String prompt = promptTemplateLoader.render(
+                    CONVERSATION_TITLE_PROMPT_PATH,
+                    Map.of(
+                            "title_max_chars", String.valueOf(maxLen),
+                            "question", question
+                    )
+            );
             ChatRequest request = ChatRequest.builder()
                     .messages(List.of(ChatMessage.user(prompt)))
                     .temperature(0.7D)
@@ -207,7 +236,7 @@ public class ConversationServiceImpl implements ConversationService {
             return llmService.chat(request);
         } catch (Exception ex) {
             log.warn("生成会话标题失败", ex);
-            return "新对话";
+            return DEFAULT_TITLE;
         }
     }
 }
