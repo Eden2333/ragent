@@ -4,25 +4,3 @@ server:
 spring:
   application:
     name: ragent-mcp-server
-  autoconfigure:
-    exclude:
-      # MySQL MCP 数据源由 MySQLDataSourceManager 自行管理，不使用 Spring 默认数据源
-      - org.springframework.boot.autoconfigure.jdbc.DataSourceAutoConfiguration
-
-mcp:
-  mysql:
-    query-timeout-seconds: 30      # 单条查询超时（秒）
-    default-max-rows: 500          # 未传 maxRows 时的默认返回行数
-    max-rows-limit: 2000           # maxRows 上限
-    max-schema-tables: 200         # mysql_get_table_schemas 单次最多返回表数
-    datasources:                   # 名称即客户端传入的 datasource 参数
-      ragent:
-        url: jdbc:mysql://127.0.0.1:3306/ragent?useUnicode=true&characterEncoding=UTF-8&serverTimezone=Asia/Shanghai
-        username: ${MYSQL_USERNAME:root}
-        password: ${MYSQL_PASSWORD:root}
-        maximum-pool-size: 5
-    tokens:                        # 每个 token 绑定可访问的数据源；token 为占位值 change-me 时会被禁用
-      - name: default
-        token: ${MCP_MYSQL_TOKEN:change-me}
-        datasources:
-          - ragent
