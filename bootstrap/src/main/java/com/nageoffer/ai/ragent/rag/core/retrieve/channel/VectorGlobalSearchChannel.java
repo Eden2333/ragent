@@ -91,7 +91,20 @@ public class VectorGlobalSearchChannel implements SearchChannel {
                 .max()
                 .orElse(0.0);
 
-        double threshold = properties.getChannels().getVectorGlobal().getConfidenceThreshold();
+        SearchChannelProperties.VectorGlobal vectorGlobal = properties.getChannels().getVectorGlobal();
+
+        // 灰区处理：当最高分落在灰区且灰区策略启用时，不独立并行启用全局检索，
+        // 改由检索引擎在定向检索 + Rerank 后按需补充调用，避免同时进行全量检索
+        SearchChannelProperties.GrayZone grayZone = vectorGlobal.getGrayZone();
+        if (grayZone.isEnabled()
+                && maxScore >= grayZone.getLowerBound()
+                && maxScore < grayZone.getUpperBound()) {
+            log.info("意图最高分（{}）落在灰区 [{}, {})，全局检索改为按需补充，不独立启用",
+                    maxScore, grayZone.getLowerBound(), grayZone.getUpperBound());
+            return false;
+        }
+
+        double threshold = vectorGlobal.getConfidenceThreshold();
         if (maxScore < threshold) {
             log.info("意图置信度过低（{}），启用全局检索", maxScore);
             return true;

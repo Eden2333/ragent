@@ -67,6 +67,44 @@ public class SearchChannelProperties {
          * 全局检索时召回更多候选，后续通过 Rerank 筛选
          */
         private int topKMultiplier = 3;
+
+        /**
+         * 灰区检索策略配置
+         * 当意图最高分落在灰区（[grayZoneLowerBound, grayZoneUpperBound)）时，
+         * 采用“先定向 + 按需全量”策略：先只走定向检索，
+         * 当 Rerank 后发现召回质量不高或数量不足时，再补充全局检索
+         */
+        private GrayZone grayZone = new GrayZone();
+    }
+
+    /**
+     * 灰区检索策略配置
+     */
+    @Data
+    public static class GrayZone {
+
+        /**
+         * 是否启用灰区“先定向 + 按需全量”策略
+         */
+        private boolean enabled = true;
+
+        /**
+         * 灰区下界（含）
+         * 意图最高分 >= 此值且 < 上界时，判定为灰区
+         */
+        private double lowerBound = 0.4;
+
+        /**
+         * 灰区上界（不含）
+         * 意图最高分 < 此值且 >= 下界时，判定为灰区
+         */
+        private double upperBound = 0.6;
+
+        /**
+         * Rerank 后的质量阈值
+         * 当 Rerank 后的最高分低于此值时，判定为召回质量不高，触发全局补充检索
+         */
+        private double rerankScoreThreshold = 0.6;
     }
 
     @Data

@@ -20,8 +20,11 @@ package com.nageoffer.ai.ragent.rag.core.retrieve;
 import cn.hutool.core.collection.CollUtil;
 import com.nageoffer.ai.ragent.framework.convention.RetrievedChunk;
 import com.nageoffer.ai.ragent.framework.trace.RagTraceNode;
+import com.nageoffer.ai.ragent.rag.config.SearchChannelProperties;
+import com.nageoffer.ai.ragent.rag.core.intent.NodeScore;
 import com.nageoffer.ai.ragent.rag.core.retrieve.channel.SearchChannel;
 import com.nageoffer.ai.ragent.rag.core.retrieve.channel.SearchChannelResult;
+import com.nageoffer.ai.ragent.rag.core.retrieve.channel.SearchChannelType;
 import com.nageoffer.ai.ragent.rag.core.retrieve.channel.SearchContext;
 import com.nageoffer.ai.ragent.rag.core.retrieve.postprocessor.SearchResultPostProcessor;
 import com.nageoffer.ai.ragent.rag.dto.SubQuestionIntent;
@@ -30,6 +33,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Service;
 
+import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Objects;
@@ -52,6 +56,7 @@ public class MultiChannelRetrievalEngine {
 
     private final List<SearchChannel> searchChannels;
     private final List<SearchResultPostProcessor> postProcessors;
+    private final SearchChannelProperties searchChannelProperties;
     @Qualifier("ragRetrievalThreadPoolExecutor")
     private final Executor ragRetrievalExecutor;
 
@@ -67,6 +72,11 @@ public class MultiChannelRetrievalEngine {
         // 构建检索上下文
         SearchContext context = buildSearchContext(subIntents, topK);
 
+        // 灰区场景：采用“先定向 + 按需全量”策略
+        if (isGrayZone(context)) {
+            return retrieveInGrayZone(context);
+        }
+
         // 【阶段1：多通道并行检索】
         List<SearchChannelResult> channelResults = executeSearchChannels(context);
         if (CollUtil.isEmpty(channelResults)) {
@@ -75,6 +85,149 @@ public class MultiChannelRetrievalEngine {
 
         // 【阶段2：后置处理器链】
         return executePostProcessors(channelResults, context);
+    }
+
+    /**
+     * 判断当前检索是否处于灰区
+     * <p>
+     * 灰区定义：意图最高分落在 [lowerBound, upperBound) 区间，
+     * 且灰区策略已启用、全局检索通道本身也已启用（否则无需按需补充全量）
+     */
+    private boolean isGrayZone(SearchContext context) {
+        SearchChannelProperties.VectorGlobal vectorGlobal =
+                searchChannelProperties.getChannels().getVectorGlobal();
+        SearchChannelProperties.GrayZone grayZone = vectorGlobal.getGrayZone();
+
+        if (!grayZone.isEnabled() || !vectorGlobal.isEnabled()) {
+            return false;
+        }
+
+        if (CollUtil.isEmpty(context.getIntents())) {
+            return false;
+        }
+
+        double maxScore = context.getIntents().stream()
+                .flatMap(si -> si.nodeScores().stream())
+                .mapToDouble(NodeScore::getScore)
+                .max()
+                .orElse(0.0);
+
+        return maxScore >= grayZone.getLowerBound() && maxScore < grayZone.getUpperBound();
+    }
+
+    /**
+     * 灰区检索：先定向 + 按需全量
+     * <p>
+     * 1. 先只执行定向检索通道并走完后置处理链（含 Rerank）；
+     * 2. 若 Rerank 后结果数量不足（&lt; topK）或最高分低于质量阈值，
+     * 判定召回质量不高，再同步补充执行全局检索通道；
+     * 3. 将定向与全局结果合并后重新走一次后置处理链，得到最终结果。
+     */
+    private List<RetrievedChunk> retrieveInGrayZone(SearchContext context) {
+        log.info("进入灰区检索流程：先定向召回，按需补充全量");
+
+        // 【步骤1：仅执行定向检索通道】
+        SearchChannel directedChannel = findChannel(SearchChannelType.INTENT_DIRECTED);
+        if (directedChannel == null || !directedChannel.isEnabled(context)) {
+            log.warn("灰区检索未找到可用的定向检索通道，回退为全局检索");
+            SearchChannel globalChannel = findChannel(SearchChannelType.VECTOR_GLOBAL);
+            if (globalChannel == null) {
+                return List.of();
+            }
+            return executePostProcessors(List.of(globalChannel.search(context)), context);
+        }
+
+        SearchChannelResult directedResult = safeSearch(directedChannel, context);
+        List<SearchChannelResult> results = new ArrayList<>();
+        results.add(directedResult);
+
+        List<RetrievedChunk> directedFinal = executePostProcessors(results, context);
+
+        // 【步骤2：评估召回质量，判断是否需要补充全量】
+        if (!needGlobalFallback(directedFinal, context)) {
+            log.info("灰区定向召回质量达标，无需补充全量检索，最终 {} 个 Chunk", directedFinal.size());
+            return directedFinal;
+        }
+
+        // 【步骤3：按需补充全局检索并合并重排】
+        SearchChannel globalChannel = findChannel(SearchChannelType.VECTOR_GLOBAL);
+        if (globalChannel == null) {
+            log.warn("灰区需要补充全量检索，但未找到全局检索通道，返回定向结果");
+            return directedFinal;
+        }
+
+        log.info("灰区定向召回不足，补充执行全局检索通道");
+        SearchChannelResult globalResult = safeSearch(globalChannel, context);
+        results.add(globalResult);
+
+        List<RetrievedChunk> merged = executePostProcessors(results, context);
+        log.info("灰区补充全量检索完成，合并重排后最终 {} 个 Chunk", merged.size());
+        return merged;
+    }
+
+    /**
+     * 判断灰区定向召回结果是否需要补充全量检索
+     * <p>
+     * 触发条件（满足其一）：
+     * 1. 结果数量不足 topK；
+     * 2. Rerank 后最高分低于质量阈值。
+     */
+    private boolean needGlobalFallback(List<RetrievedChunk> chunks, SearchContext context) {
+        SearchChannelProperties.GrayZone grayZone =
+                searchChannelProperties.getChannels().getVectorGlobal().getGrayZone();
+
+        if (CollUtil.isEmpty(chunks)) {
+            log.info("灰区定向召回为空，触发全量补充");
+            return true;
+        }
+
+        if (chunks.size() < context.getTopK()) {
+            log.info("灰区定向召回数量不足（{} < topK {}），触发全量补充", chunks.size(), context.getTopK());
+            return true;
+        }
+
+        double topScore = chunks.stream()
+                .map(RetrievedChunk::getScore)
+                .filter(Objects::nonNull)
+                .mapToDouble(Float::doubleValue)
+                .max()
+                .orElse(0.0);
+
+        if (topScore < grayZone.getRerankScoreThreshold()) {
+            log.info("灰区定向召回质量不高（Rerank 最高分 {} < 阈值 {}），触发全量补充",
+                    topScore, grayZone.getRerankScoreThreshold());
+            return true;
+        }
+
+        return false;
+    }
+
+    /**
+     * 按通道类型查找通道
+     */
+    private SearchChannel findChannel(SearchChannelType type) {
+        return searchChannels.stream()
+                .filter(channel -> channel.getType() == type)
+                .findFirst()
+                .orElse(null);
+    }
+
+    /**
+     * 安全执行单个通道检索，异常时返回空结果
+     */
+    private SearchChannelResult safeSearch(SearchChannel channel, SearchContext context) {
+        try {
+            log.info("执行检索通道：{}", channel.getName());
+            return channel.search(context);
+        } catch (Exception e) {
+            log.error("检索通道 {} 执行失败", channel.getName(), e);
+            return SearchChannelResult.builder()
+                    .channelType(channel.getType())
+                    .channelName(channel.getName())
+                    .chunks(List.of())
+                    .confidence(0.0)
+                    .build();
+        }
     }
 
     /**
