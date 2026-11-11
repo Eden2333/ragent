@@ -19,7 +19,6 @@ package com.nageoffer.ai.ragent.rag.core.intent;
 
 import cn.hutool.core.collection.CollUtil;
 import cn.hutool.core.util.StrUtil;
-import cn.hutool.json.JSONUtil;
 import com.nageoffer.ai.ragent.rag.dto.IntentCandidate;
 import com.nageoffer.ai.ragent.rag.dto.IntentGroup;
 import com.nageoffer.ai.ragent.rag.dto.SubQuestionIntent;
@@ -48,7 +47,7 @@ import static com.nageoffer.ai.ragent.rag.enums.IntentKind.SYSTEM;
 @Slf4j
 public class IntentResolver {
 
-    @Qualifier("defaultIntentClassifier")
+    @Qualifier("vectorRecallIntentClassifier")
     private final IntentClassifier intentClassifier;
     @Qualifier("intentClassifyThreadPoolExecutor")
     private final Executor intentClassifyExecutor;
@@ -88,14 +87,19 @@ public class IntentResolver {
 
     private List<NodeScore> classifyIntents(String question) {
         List<NodeScore> scores = intentClassifier.classifyTargets(question);
-        log.info("当前问题：{}\n意图识别树如下所示：{}\n",
+        // 仅打印摘要字段，不修改节点对象（原实现通过 peek 置空 children 会污染共享的节点数据）
+        log.info("当前问题：{}\n意图识别结果如下所示：\n{}\n",
                 question,
-                JSONUtil.toJsonPrettyStr(
-                        scores.stream().peek(each -> {
+                scores.stream()
+                        .map(each -> {
                             IntentNode node = each.getNode();
-                            node.setChildren(null);
-                        }).collect(Collectors.toList())
-                )
+                            return String.format("- id=%s, path=%s, kind=%s, score=%.2f",
+                                    node == null ? null : node.getId(),
+                                    node == null ? null : node.getFullPath(),
+                                    node == null ? null : node.getKind(),
+                                    each.getScore());
+                        })
+                        .collect(Collectors.joining("\n"))
         );
         return scores.stream()
                 .filter(ns -> ns.getScore() >= INTENT_MIN_SCORE)

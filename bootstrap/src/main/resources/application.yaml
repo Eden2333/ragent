@@ -83,6 +83,12 @@ rag:
         min-intent-score: 0.4
         top-k-multiplier: 2
 
+  intent:
+    vector-recall:
+      enabled: true
+      top-k: 10
+      embedding-model-id: text-embedding-v4
+
   trace:
     enabled: true
     max-error-length: 1000

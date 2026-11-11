@@ -42,6 +42,7 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.Deque;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
@@ -160,8 +161,37 @@ public class DefaultIntentClassifier implements IntentClassifier, IntentNodeRegi
         // 每次都从Redis读取最新数据
         IntentTreeData data = loadIntentTreeData();
         log.debug("意图树数据加载完成, 总节点数: {}, 叶子节点数: {}", data.allNodes.size(), data.leafNodes.size());
+        return scoreByLLM(question, data.leafNodes, data.id2Node);
+    }
 
-        String systemPrompt = buildPrompt(data.leafNodes);
+    /**
+     * 获取当前意图树的全部叶子节点（每次从Redis读取最新数据）
+     */
+    public List<IntentNode> listLeafNodes() {
+        return loadIntentTreeData().leafNodes;
+    }
+
+    /**
+     * 仅在给定的候选节点中做 LLM 打分（用于向量粗筛后的精筛）
+     * - LLM 返回候选范围之外的 ID 会被丢弃
+     * - 返回结果已按 score 从高到低排序
+     */
+    public List<NodeScore> classifyAmong(String question, List<IntentNode> candidates) {
+        if (CollUtil.isEmpty(candidates)) {
+            return List.of();
+        }
+        Map<String, IntentNode> id2Node = new LinkedHashMap<>();
+        for (IntentNode node : candidates) {
+            id2Node.putIfAbsent(node.getId(), node);
+        }
+        return scoreByLLM(question, candidates, id2Node);
+    }
+
+    /**
+     * 将 promptNodes 拼进 Prompt 交给 LLM 打分，并只保留 validNodes 中存在的节点
+     */
+    private List<NodeScore> scoreByLLM(String question, List<IntentNode> promptNodes, Map<String, IntentNode> validNodes) {
+        String systemPrompt = buildPrompt(promptNodes);
         ChatRequest request = ChatRequest.builder()
                 .messages(List.of(
                         ChatMessage.system(systemPrompt),
@@ -201,7 +231,7 @@ public class DefaultIntentClassifier implements IntentClassifier, IntentNodeRegi
                 String id = obj.get("id").getAsString();
                 double score = obj.get("score").getAsDouble();
 
-                IntentNode node = data.id2Node.get(id);
+                IntentNode node = validNodes.get(id);
                 if (node == null) {
                     log.warn("LLM 返回了未知的意图节点 ID: {}, 已跳过", id);
                     continue;
