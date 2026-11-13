@@ -78,9 +78,13 @@ public class ParserNode implements IngestionNode {
         validateMimeType(settings, mimeType, fileName);
 
         ParserSettings.ParserRule rule = matchRule(settings, mimeType, fileName);
-        DocumentParser parser = parserSelector.select(ParserType.TIKA.getType());
+        // parserType=auto 时按 MIME 类型自动选择；其余情况固定使用 Tika（保持历史行为）
+        boolean autoSelect = settings != null && "auto".equalsIgnoreCase(settings.getParserType());
+        DocumentParser parser = autoSelect
+                ? parserSelector.selectByMimeType(mimeType)
+                : parserSelector.select(ParserType.TIKA.getType());
         if (parser == null) {
-            return NodeResult.fail(new ClientException("未配置 Tika 解析器"));
+            return NodeResult.fail(new ClientException("未配置可用的文档解析器"));
         }
 
         Map<String, Object> options = rule == null ? Collections.emptyMap() : rule.getOptions();

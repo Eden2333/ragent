@@ -19,6 +19,7 @@ package com.nageoffer.ai.ragent.ingestion.node;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.nageoffer.ai.ragent.core.chunk.ChunkingMode;
 import com.nageoffer.ai.ragent.core.chunk.ChunkingOptions;
 import com.nageoffer.ai.ragent.core.chunk.ChunkingStrategyFactory;
 import com.nageoffer.ai.ragent.core.chunk.VectorChunk;
@@ -33,7 +34,9 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 import org.springframework.util.StringUtils;
 
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.stream.Collectors;
 
 /**
@@ -64,7 +67,7 @@ public class ChunkerNode implements IngestionNode {
             return NodeResult.fail(new ClientException("未找到分块策略: " + settings.getStrategy()));
         }
 
-        ChunkingOptions chunkConfig = convertToChunkConfig(settings);
+        ChunkingOptions chunkConfig = convertToChunkConfig(settings, context.getEmbeddingModel());
         List<VectorChunk> results = chunker.chunk(text, chunkConfig);
         List<VectorChunk> chunks = convertToVectorChunks(results);
 
@@ -72,12 +75,40 @@ public class ChunkerNode implements IngestionNode {
         return NodeResult.ok("已分块 " + chunks.size() + " 段");
     }
 
-    private ChunkingOptions convertToChunkConfig(ChunkerSettings settings) {
+    private ChunkingOptions convertToChunkConfig(ChunkerSettings settings, String embeddingModel) {
+        Map<String, Object> metadata = new HashMap<>();
+        putIfNotNull(metadata, "targetChars", settings.getTargetChars());
+        putIfNotNull(metadata, "maxChars", settings.getMaxChars());
+        putIfNotNull(metadata, "minChars", settings.getMinChars());
+        putIfNotNull(metadata, "overlapChars", settings.getOverlapChars());
+        if (StringUtils.hasText(embeddingModel)) {
+            metadata.put("embeddingModel", embeddingModel);
+        }
+
+        // 结构感知分块以 targetChars / overlapChars 作为块大小与重叠，与知识库原分块模式保持一致
+        Integer chunkSize = settings.getChunkSize();
+        Integer overlapSize = settings.getOverlapSize();
+        if (settings.getStrategy() != ChunkingMode.FIXED_SIZE) {
+            if (settings.getTargetChars() != null) {
+                chunkSize = settings.getTargetChars();
+            }
+            if (settings.getOverlapChars() != null) {
+                overlapSize = settings.getOverlapChars();
+            }
+        }
+
         return ChunkingOptions.builder()
-                .chunkSize(settings.getChunkSize())
-                .overlapSize(settings.getOverlapSize())
+                .chunkSize(chunkSize)
+                .overlapSize(overlapSize)
                 .separator(settings.getSeparator())
+                .metadata(metadata)
                 .build();
+    }
+
+    private void putIfNotNull(Map<String, Object> map, String key, Object value) {
+        if (value != null) {
+            map.put(key, value);
+        }
     }
 
     private List<VectorChunk> convertToVectorChunks(List<VectorChunk> results) {

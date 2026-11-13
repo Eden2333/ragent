@@ -42,6 +42,12 @@ public class ParserSettings {
     private List<ParserRule> rules;
 
     /**
+     * 解析器选择方式
+     * 为空时固定使用 Tika（保持历史行为）；取值 "auto" 时按 MIME 类型自动选择解析器（如 Markdown 走 Markdown 解析器）
+     */
+    private String parserType;
+
+    /**
      * 解析规则配置
      * 定义单个解析规则，指定哪些MIME类型应该使用哪种解析器
      */

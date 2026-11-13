@@ -33,10 +33,7 @@ import com.nageoffer.ai.ragent.knowledge.controller.vo.KnowledgeDocumentVO;
 import com.nageoffer.ai.ragent.knowledge.controller.vo.KnowledgeDocumentChunkLogVO;
 import com.nageoffer.ai.ragent.knowledge.controller.vo.KnowledgeDocumentSearchVO;
 import com.nageoffer.ai.ragent.core.chunk.ChunkingMode;
-import com.nageoffer.ai.ragent.core.chunk.ChunkingOptions;
-import com.nageoffer.ai.ragent.core.chunk.ChunkingStrategyFactory;
 import com.nageoffer.ai.ragent.core.chunk.VectorChunk;
-import com.nageoffer.ai.ragent.core.chunk.ChunkingStrategy;
 import com.nageoffer.ai.ragent.knowledge.dao.entity.KnowledgeBaseDO;
 import com.nageoffer.ai.ragent.knowledge.dao.entity.KnowledgeDocumentDO;
 import com.nageoffer.ai.ragent.knowledge.dao.entity.KnowledgeDocumentChunkLogDO;
@@ -50,8 +47,6 @@ import com.nageoffer.ai.ragent.knowledge.enums.SourceType;
 import com.nageoffer.ai.ragent.framework.context.UserContext;
 import com.nageoffer.ai.ragent.framework.exception.ClientException;
 import com.nageoffer.ai.ragent.framework.exception.ServiceException;
-import com.nageoffer.ai.ragent.core.parser.DocumentParser;
-import com.nageoffer.ai.ragent.core.parser.DocumentParserSelector;
 import com.nageoffer.ai.ragent.rag.core.vector.VectorStoreService;
 import com.nageoffer.ai.ragent.rag.core.vector.VectorSpaceId;
 import com.nageoffer.ai.ragent.rag.service.FileStorageService;
@@ -65,7 +60,12 @@ import com.nageoffer.ai.ragent.ingestion.engine.IngestionEngine;
 import com.nageoffer.ai.ragent.ingestion.dao.entity.IngestionPipelineDO;
 import com.nageoffer.ai.ragent.ingestion.dao.mapper.IngestionPipelineMapper;
 import com.nageoffer.ai.ragent.ingestion.domain.context.IngestionContext;
+import com.nageoffer.ai.ragent.ingestion.domain.context.NodeLog;
+import com.nageoffer.ai.ragent.ingestion.domain.enums.IngestionNodeType;
+import com.nageoffer.ai.ragent.ingestion.domain.pipeline.NodeConfig;
 import com.nageoffer.ai.ragent.ingestion.domain.pipeline.PipelineDefinition;
+import com.nageoffer.ai.ragent.ingestion.domain.settings.ChunkerSettings;
+import com.nageoffer.ai.ragent.ingestion.domain.settings.ParserSettings;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.redisson.api.RLock;
@@ -99,8 +99,6 @@ public class KnowledgeDocumentServiceImpl implements KnowledgeDocumentService {
 
     private final KnowledgeBaseMapper kbMapper;
     private final KnowledgeDocumentMapper docMapper;
-    private final DocumentParserSelector parserSelector;
-    private final ChunkingStrategyFactory chunkingStrategyFactory;
     private final FileStorageService fileStorageService;
     private final VectorStoreService vectorStoreService;
     private final KnowledgeChunkService knowledgeChunkService;
@@ -378,32 +376,69 @@ public class KnowledgeDocumentServiceImpl implements KnowledgeDocumentService {
         String docId = String.valueOf(documentDO.getId());
         ChunkingMode chunkingMode = resolveChunkingMode(documentDO.getChunkStrategy());
         String embeddingModel = resolveEmbeddingModel(documentDO.getKbId());
-        ChunkingOptions config = buildChunkingOptions(chunkingMode, documentDO, embeddingModel);
-        long extractStart = System.currentTimeMillis();
-        long chunkStart = 0;
-        long extractDuration = 0;
-        long chunkDuration = 0;
+        PipelineDefinition pipelineDef = buildDefaultChunkPipeline(chunkingMode, documentDO);
+        IngestionContext context = null;
 
         try (InputStream is = fileStorageService.openStream(documentDO.getFileUrl())) {
-            DocumentParser parser = parserSelector.selectByMimeType(documentDO.getFileType());
-            String text = parser.extractText(is, documentDO.getDocName());
-            extractDuration = System.currentTimeMillis() - extractStart;
-            ChunkingStrategy chunkingStrategy = chunkingStrategyFactory.requireStrategy(chunkingMode);
-            chunkStart = System.currentTimeMillis();
-            List<VectorChunk> chunks = chunkingStrategy.chunk(text, config);
-            chunkDuration = System.currentTimeMillis() - chunkStart;
-            return new ChunkProcessResult(chunks, extractDuration, chunkDuration);
+            byte[] fileBytes = is.readAllBytes();
+            context = IngestionContext.builder()
+                    .taskId(docId)
+                    .rawBytes(fileBytes)
+                    .mimeType(documentDO.getFileType())
+                    .embeddingModel(embeddingModel)
+                    .build();
+
+            // 统一走 IngestionEngine：Parser -> Chunker，向量写入与落库仍由本服务负责
+            context = ingestionEngine.execute(pipelineDef, context);
+            if (context.getError() != null) {
+                throw new ServiceException("分块流水线执行失败: " + context.getError().getMessage());
+            }
+            return new ChunkProcessResult(context.getChunks() == null ? List.of() : context.getChunks(),
+                    nodeDuration(context, IngestionNodeType.PARSER),
+                    nodeDuration(context, IngestionNodeType.CHUNKER));
         } catch (Exception e) {
-            if (extractStart > 0 && extractDuration == 0) {
-                extractDuration = System.currentTimeMillis() - extractStart;
-            }
-            if (chunkStart > 0 && chunkDuration == 0) {
-                chunkDuration = System.currentTimeMillis() - chunkStart;
-            }
             log.error("文件分块失败：docId={}", docId, e);
             markChunkFailed(documentDO.getId());
-            return new ChunkProcessResult(null, extractDuration, chunkDuration);
+            return new ChunkProcessResult(null,
+                    nodeDuration(context, IngestionNodeType.PARSER),
+                    nodeDuration(context, IngestionNodeType.CHUNKER));
         }
+    }
+
+    /**
+     * 构造 CHUNK 模式对应的内置默认流水线（仅存在于内存，不落库，不可被用户修改）
+     */
+    private PipelineDefinition buildDefaultChunkPipeline(ChunkingMode mode, KnowledgeDocumentDO documentDO) {
+        ChunkerSettings chunkerSettings = buildChunkerSettings(mode, documentDO);
+        ParserSettings parserSettings = ParserSettings.builder().parserType("auto").build();
+
+        NodeConfig parserNode = NodeConfig.builder()
+                .nodeId("default-parser")
+                .nodeType(IngestionNodeType.PARSER.getValue())
+                .settings(objectMapper.valueToTree(parserSettings))
+                .nextNodeId("default-chunker")
+                .build();
+        NodeConfig chunkerNode = NodeConfig.builder()
+                .nodeId("default-chunker")
+                .nodeType(IngestionNodeType.CHUNKER.getValue())
+                .settings(objectMapper.valueToTree(chunkerSettings))
+                .build();
+
+        return PipelineDefinition.builder()
+                .id("default-chunk-pipeline")
+                .name("默认分块流水线")
+                .nodes(List.of(parserNode, chunkerNode))
+                .build();
+    }
+
+    private long nodeDuration(IngestionContext context, IngestionNodeType type) {
+        if (context == null || context.getLogs() == null) {
+            return 0;
+        }
+        return context.getLogs().stream()
+                .filter(each -> type.getValue().equals(each.getNodeType()))
+                .mapToLong(NodeLog::getDurationMs)
+                .sum();
     }
 
     private static class ChunkProcessResult {
@@ -467,6 +502,7 @@ public class KnowledgeDocumentServiceImpl implements KnowledgeDocumentService {
                     .pipelineId(String.valueOf(pipelineId))
                     .rawBytes(fileBytes)
                     .mimeType(documentDO.getFileType())
+                    .embeddingModel(kbDO.getEmbeddingModel())
                     .vectorSpaceId(VectorSpaceId.builder()
                             .logicalName(kbDO.getCollectionName())
                             .build())
@@ -768,22 +804,16 @@ public class KnowledgeDocumentServiceImpl implements KnowledgeDocumentService {
         return ChunkingMode.fromValue(mode);
     }
 
-    private ChunkingOptions buildChunkingOptions(ChunkingMode mode, KnowledgeDocumentDO documentDO, String embeddingModel) {
+    private ChunkerSettings buildChunkerSettings(ChunkingMode mode, KnowledgeDocumentDO documentDO) {
         if (mode == null) {
             mode = ChunkingMode.STRUCTURE_AWARE;
         }
         Map<String, Object> config = parseChunkConfig(documentDO.getChunkConfig());
         if (mode == ChunkingMode.FIXED_SIZE) {
-            Integer chunkSize = getConfigInt(config, "chunkSize", 512);
-            Integer overlapSize = getConfigInt(config, "overlapSize", 128);
-            Map<String, Object> metadata = new HashMap<>();
-            if (StringUtils.hasText(embeddingModel)) {
-                metadata.put("embeddingModel", embeddingModel);
-            }
-            return ChunkingOptions.builder()
-                    .chunkSize(chunkSize)
-                    .overlapSize(overlapSize)
-                    .metadata(metadata)
+            return ChunkerSettings.builder()
+                    .strategy(mode)
+                    .chunkSize(getConfigInt(config, "chunkSize", 512))
+                    .overlapSize(getConfigInt(config, "overlapSize", 128))
                     .build();
         }
         Integer target = getConfigInt(config, "targetChars", targetChars);
@@ -791,19 +821,14 @@ public class KnowledgeDocumentServiceImpl implements KnowledgeDocumentService {
         Integer min = getConfigInt(config, "minChars", minChars);
         Integer overlap = getConfigInt(config, "overlapChars", overlapChars);
 
-        Map<String, Object> metadata = new HashMap<>();
-        metadata.put("targetChars", target);
-        metadata.put("maxChars", max);
-        metadata.put("minChars", min);
-        metadata.put("overlapChars", overlap);
-        if (StringUtils.hasText(embeddingModel)) {
-            metadata.put("embeddingModel", embeddingModel);
-        }
-
-        return ChunkingOptions.builder()
+        return ChunkerSettings.builder()
+                .strategy(mode)
                 .chunkSize(target)
                 .overlapSize(overlap)
-                .metadata(metadata)
+                .targetChars(target)
+                .maxChars(max)
+                .minChars(min)
+                .overlapChars(overlap)
                 .build();
     }
 

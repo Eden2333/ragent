@@ -105,6 +105,11 @@ public class IngestionContext {
     private VectorSpaceId vectorSpaceId;
 
     /**
+     * 指定的 Embedding 模型ID（如知识库配置的模型），为空则使用默认候选模型
+     */
+    private String embeddingModel;
+
+    /**
      * 当前摄取任务的状态
      */
     private IngestionStatus status;

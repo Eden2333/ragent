@@ -55,4 +55,24 @@ public class ChunkerSettings {
      * 用于指定文本切分的边界字符
      */
     private String separator;
+
+    /**
+     * 结构感知分块：目标块字符数（为空则使用分块器默认配置）
+     */
+    private Integer targetChars;
+
+    /**
+     * 结构感知分块：单块最大字符数
+     */
+    private Integer maxChars;
+
+    /**
+     * 结构感知分块：单块最小字符数
+     */
+    private Integer minChars;
+
+    /**
+     * 结构感知分块：相邻块重叠字符数
+     */
+    private Integer overlapChars;
 }
