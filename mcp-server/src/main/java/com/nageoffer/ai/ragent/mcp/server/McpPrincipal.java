@@ -15,41 +15,28 @@
  * limitations under the License.
  */
 
-package com.nageoffer.ai.ragent.mcp.protocol;
+package com.nageoffer.ai.ragent.mcp.server;
 
-import lombok.AllArgsConstructor;
-import lombok.Data;
-import lombok.NoArgsConstructor;
-
-import java.util.Map;
+import java.util.Set;
 
 /**
- * JSON-RPC 2.0 请求
- * <p>
- * 对应 HTTP POST /mcp 的请求体
+ * 鉴权通过的调用方
+ *
+ * @param name   调用方名称（如 token 名称），仅用于日志与审计，不含凭据
+ * @param grants 授权范围，具体含义由各领域 Server 自行解释（如 MySQL Server 中表示可访问的数据源）
  */
-@Data
-@NoArgsConstructor
-@AllArgsConstructor
-public class JsonRpcRequest {
+public record McpPrincipal(String name, Set<String> grants) {
 
     /**
-     * 协议版本，固定为 2.0
+     * 无鉴权 Server 使用的匿名调用方，不具备任何授权范围
      */
-    private String jsonrpc = "2.0";
+    public static final McpPrincipal ANONYMOUS = new McpPrincipal("anonymous", Set.of());
 
-    /**
-     * 请求 ID，通知请求可为空
-     */
-    private Object id;
+    public McpPrincipal {
+        grants = grants == null ? Set.of() : Set.copyOf(grants);
+    }
 
-    /**
-     * 调用方法名，例如 initialize、tools/list、tools/call
-     */
-    private String method;
-
-    /**
-     * 方法参数，key 为参数名，value 为参数值
-     */
-    private Map<String, Object> params;
+    public boolean hasGrant(String grant) {
+        return grant != null && grants.contains(grant);
+    }
 }

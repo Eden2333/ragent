@@ -15,42 +15,16 @@
  * limitations under the License.
  */
 
-package com.nageoffer.ai.ragent.mcp.protocol;
-
-import lombok.AllArgsConstructor;
-import lombok.Data;
-import lombok.NoArgsConstructor;
+package com.nageoffer.ai.ragent.mcp.server;
 
 /**
- * JSON-RPC 2.0 错误对象
+ * 工具执行异常，消息可安全返回给客户端（不得包含密码、堆栈、内部地址等敏感信息）
+ * <p>
+ * 协议层只透传该类异常的消息，其他异常一律替换为通用提示
  */
-@Data
-@NoArgsConstructor
-@AllArgsConstructor
-public class JsonRpcError {
+public class McpToolException extends RuntimeException {
 
-    /**
-     * 方法不存在
-     */
-    public static final int METHOD_NOT_FOUND = -32601;
-
-    /**
-     * 参数非法
-     */
-    public static final int INVALID_PARAMS = -32602;
-
-    /**
-     * 服务器内部错误
-     */
-    public static final int INTERNAL_ERROR = -32603;
-
-    /**
-     * 错误码
-     */
-    private Integer code;
-
-    /**
-     * 错误消息
-     */
-    private String message;
+    public McpToolException(String message) {
+        super(message);
+    }
 }
