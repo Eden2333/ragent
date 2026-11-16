@@ -44,6 +44,11 @@ public enum ModelProvider {
     SILICON_FLOW("siliconflow"),
 
     /**
+     * MCD 内部大模型网关（OpenAI 兼容协议）
+     */
+    MCD("mcd"),
+
+    /**
      * 空实现，用于测试或占位
      */
     NOOP("noop");

@@ -34,6 +34,8 @@ import com.nageoffer.ai.ragent.knowledge.dao.mapper.KnowledgeDocumentMapper;
 import com.nageoffer.ai.ragent.framework.context.UserContext;
 import com.nageoffer.ai.ragent.framework.exception.ClientException;
 import com.nageoffer.ai.ragent.framework.exception.ServiceException;
+import com.nageoffer.ai.ragent.infra.config.AIModelProperties;
+import com.nageoffer.ai.ragent.rag.config.RAGDefaultProperties;
 import com.nageoffer.ai.ragent.rag.core.vector.VectorSpaceId;
 import com.nageoffer.ai.ragent.rag.core.vector.VectorSpaceSpec;
 import com.nageoffer.ai.ragent.rag.core.vector.VectorStoreAdmin;
@@ -61,9 +63,38 @@ public class KnowledgeBaseServiceImpl implements KnowledgeBaseService {
     private final KnowledgeDocumentMapper knowledgeDocumentMapper;
     private final VectorStoreAdmin vectorStoreAdmin;
     private final S3Client s3Client;
+    private final AIModelProperties aiModelProperties;
+    private final RAGDefaultProperties ragDefaultProperties;
+
+    /**
+     * 校验 Embedding 模型维度与向量库配置维度一致。
+     * Collection 的向量维度建表后不可变，维度不一致会在写入文档时才失败，因此在创建/修改时提前拦截。
+     * 模型未声明维度或不在候选列表中时不拦截（保持原有行为）。
+     */
+    private void validateEmbeddingDimension(String embeddingModelId) {
+        if (!StringUtils.hasText(embeddingModelId)
+                || aiModelProperties.getEmbedding() == null
+                || aiModelProperties.getEmbedding().getCandidates() == null) {
+            return;
+        }
+        Integer expected = ragDefaultProperties.getDimension();
+        if (expected == null || expected <= 0) {
+            return;
+        }
+        aiModelProperties.getEmbedding().getCandidates().stream()
+                .filter(c -> c != null && embeddingModelId.equals(c.getId()))
+                .findFirst()
+                .ifPresent(c -> {
+                    if (c.getDimension() != null && !c.getDimension().equals(expected)) {
+                        throw new ClientException("Embedding 模型维度(" + c.getDimension()
+                                + ")与向量库配置维度(" + expected + ")不一致：" + embeddingModelId);
+                    }
+                });
+    }
 
     @Override
     public String create(KnowledgeBaseCreateRequest requestParam) {
+        validateEmbeddingDimension(requestParam.getEmbeddingModel());
         // 名称重复校验
         String name = requestParam.getName().replaceAll("\\s+", "");
         Long count = knowledgeBaseMapper.selectCount(
@@ -152,6 +183,7 @@ public class KnowledgeBaseServiceImpl implements KnowledgeBaseService {
                 throw new IllegalStateException("知识库已存在向量化文档，不允许修改嵌入模型");
             }
 
+            validateEmbeddingDimension(requestParam.getEmbeddingModel());
             kb.setEmbeddingModel(requestParam.getEmbeddingModel());
         }
 

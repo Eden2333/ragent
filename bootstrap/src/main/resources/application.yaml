@@ -124,6 +124,13 @@ ai:
       endpoints:
         chat: /v1/chat/completions
         embedding: /v1/embeddings
+    mcd:
+      url: https://llm-lab.mcd.ai
+      api-key: ${MCD_API_KEY:}
+      endpoints:
+        chat: /v1/chat/completions
+        embedding: /v1/embeddings
+        rerank: /v1/rerank
 
   selection:
     failure-threshold: 2
@@ -133,9 +140,13 @@ ai:
     message-chunk-size: 1
 
   chat:
-    default-model: qwen3-max
+    default-model: mcd-qwen3.8-flash
     deep-thinking-model: qwen3-max
     candidates:
+      - id: mcd-qwen3.8-flash
+        provider: mcd
+        model: qwen3.8-flash
+        priority: 0
       - id: qwen-plus
         provider: bailian
         model: qwen-plus-latest
@@ -156,8 +167,13 @@ ai:
         priority: 2
 
   embedding:
-    default-model: text-embedding-v4
+    default-model: mcd-text-embedding-v4
     candidates:
+      - id: mcd-text-embedding-v4
+        provider: mcd
+        model: text-embedding-v4
+        dimension: 1024
+        priority: 0
       - id: text-embedding-v4
         provider: bailian
         model: text-embedding-v4
@@ -170,8 +186,12 @@ ai:
         priority: 2
 
   rerank:
-    default-model: qwen3-rerank
+    default-model: mcd-qwen3-rerank
     candidates:
+      - id: mcd-qwen3-rerank
+        provider: mcd
+        model: qwen3-rerank
+        priority: 0
       - id: qwen3-rerank
         provider: bailian
         model: qwen3-rerank
