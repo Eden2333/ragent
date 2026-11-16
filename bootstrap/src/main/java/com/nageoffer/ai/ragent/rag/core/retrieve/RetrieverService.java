@@ -97,5 +97,18 @@ public interface RetrieverService {
      * @return RetrievedChunk 列表（按相似度排序）
      */
     List<RetrievedChunk> retrieveByVector(float[] vector, RetrieveRequest retrieveParam);
+
+    /**
+     * 关键词（BM25 全文）检索
+     * <p>
+     * 说明：
+     * - 直接以原始文本检索，由向量库服务端分词，不调用 Embedding 模型
+     * - 要求目标 collection 含 BM25 稀疏向量字段，否则抛出异常（由调用方按集合降级处理）
+     * - 返回的分数为 BM25 分，仅在同一 collection 内可比，跨 collection 融合应使用排名而非分数
+     *
+     * @param retrieveParam 检索请求参数（query、topK、collectionName）
+     * @return RetrievedChunk 列表（按 BM25 分倒序）
+     */
+    List<RetrievedChunk> retrieveByKeyword(RetrieveRequest retrieveParam);
 }
 

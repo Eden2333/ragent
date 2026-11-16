@@ -18,6 +18,8 @@
 package com.nageoffer.ai.ragent.rag.core.vector;
 
 import com.nageoffer.ai.ragent.rag.config.RAGDefaultProperties;
+import com.nageoffer.ai.ragent.rag.config.SearchChannelProperties;
+import io.milvus.common.clientenum.FunctionType;
 import com.nageoffer.ai.ragent.framework.exception.kb.VectorCollectionAlreadyExistsException;
 import io.milvus.v2.client.MilvusClientV2;
 import io.milvus.v2.common.ConsistencyLevel;
@@ -40,6 +42,12 @@ public class MilvusVectorStoreAdmin implements VectorStoreAdmin {
 
     private final MilvusClientV2 milvusClient;
     private final RAGDefaultProperties ragDefaultProperties;
+    private final SearchChannelProperties searchChannelProperties;
+
+    /**
+     * BM25 稀疏向量字段名，由 BM25 Function 根据 content 自动生成
+     */
+    public static final String KEYWORD_SPARSE_FIELD = "content_sparse";
 
     @Override
     public void ensureVectorSpace(VectorSpaceSpec spec) {
@@ -51,6 +59,7 @@ public class MilvusVectorStoreAdmin implements VectorStoreAdmin {
             throw new VectorCollectionAlreadyExistsException(logicalName);
         }
 
+        final boolean keywordEnabled = searchChannelProperties.getChannels().getKeyword().isEnabled();
         List<CreateCollectionReq.FieldSchema> fieldSchemaList = new ArrayList<>();
 
         fieldSchemaList.add(
@@ -68,8 +77,18 @@ public class MilvusVectorStoreAdmin implements VectorStoreAdmin {
                         .name("content")
                         .dataType(DataType.VarChar)
                         .maxLength(65535)
+                        .enableAnalyzer(keywordEnabled ? Boolean.TRUE : null)
+                        .analyzerParams(keywordEnabled ? Map.of("type", "chinese") : null)
                         .build()
         );
+        if (keywordEnabled) {
+            fieldSchemaList.add(
+                    CreateCollectionReq.FieldSchema.builder()
+                            .name(KEYWORD_SPARSE_FIELD)
+                            .dataType(DataType.SparseFloatVector)
+                            .build()
+            );
+        }
 
         fieldSchemaList.add(
                 CreateCollectionReq.FieldSchema.builder()
@@ -90,6 +109,15 @@ public class MilvusVectorStoreAdmin implements VectorStoreAdmin {
                 .builder()
                 .fieldSchemaList(fieldSchemaList)
                 .build();
+        if (keywordEnabled) {
+            // BM25 Function：写入 content 时由 Milvus 自动生成稀疏向量，应用层无需写入该字段
+            collectionSchema.addFunction(CreateCollectionReq.Function.builder()
+                    .name("content_bm25_fn")
+                    .functionType(FunctionType.BM25)
+                    .inputFieldNames(List.of("content"))
+                    .outputFieldNames(List.of(KEYWORD_SPARSE_FIELD))
+                    .build());
+        }
 
         IndexParam hnswIndex = IndexParam.builder()
                 .fieldName("embedding")
@@ -103,6 +131,17 @@ public class MilvusVectorStoreAdmin implements VectorStoreAdmin {
                 ))
                 .build();
 
+        List<IndexParam> indexParams = new ArrayList<>();
+        indexParams.add(hnswIndex);
+        if (keywordEnabled) {
+            indexParams.add(IndexParam.builder()
+                    .fieldName(KEYWORD_SPARSE_FIELD)
+                    .indexType(IndexParam.IndexType.SPARSE_INVERTED_INDEX)
+                    .metricType(IndexParam.MetricType.BM25)
+                    .indexName(KEYWORD_SPARSE_FIELD)
+                    .build());
+        }
+
         CreateCollectionReq createReq = CreateCollectionReq.builder()
                 .collectionName(logicalName)
                 .collectionSchema(collectionSchema)
@@ -110,7 +149,7 @@ public class MilvusVectorStoreAdmin implements VectorStoreAdmin {
                 .vectorFieldName("embedding")
                 .metricType(ragDefaultProperties.getMetricType())
                 .consistencyLevel(ConsistencyLevel.BOUNDED)
-                .indexParams(List.of(hnswIndex))
+                .indexParams(indexParams)
                 .description(spec.getRemark())
                 .build();
 

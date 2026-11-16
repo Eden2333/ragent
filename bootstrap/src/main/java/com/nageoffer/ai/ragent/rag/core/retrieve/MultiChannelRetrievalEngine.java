@@ -141,6 +141,12 @@ public class MultiChannelRetrievalEngine {
         List<SearchChannelResult> results = new ArrayList<>();
         results.add(directedResult);
 
+        // 关键词通道成本低且与向量互补，灰区也一并执行，再由 RRF 融合
+        SearchChannel keywordChannel = findChannel(SearchChannelType.KEYWORD_BM25);
+        if (keywordChannel != null && keywordChannel.isEnabled(context)) {
+            results.add(safeSearch(keywordChannel, context));
+        }
+
         List<RetrievedChunk> directedFinal = executePostProcessors(results, context);
 
         // 【步骤2：评估召回质量，判断是否需要补充全量】

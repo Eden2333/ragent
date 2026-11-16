@@ -82,6 +82,17 @@ rag:
       intent-directed:
         min-intent-score: 0.4
         top-k-multiplier: 2
+      # 关键词(BM25)通道：依赖 Milvus 2.5+；仅对开启后新建的 collection 生效，存量 collection 需重建
+      keyword:
+        enabled: false
+        top-k-multiplier: 2
+      # 多路召回 RRF 融合（仅在存在关键词通道结果时生效）
+      fusion:
+        enabled: true
+        rrf-k: 60
+        vector-weight: 1.0
+        keyword-weight: 1.0
+        candidate-multiplier: 3
 
   intent:
     vector-recall:

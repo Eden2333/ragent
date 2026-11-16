@@ -35,10 +35,10 @@ public enum SearchChannelType {
     INTENT_DIRECTED,
 
     /**
-     * ES 关键词检索
-     * 基于 Elasticsearch 的关键词分词检索
+     * BM25 关键词检索
+     * 基于 Milvus BM25 全文检索（稀疏向量）
      */
-    KEYWORD_ES,
+    KEYWORD_BM25,
 
     /**
      * 混合检索

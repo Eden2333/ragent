@@ -46,6 +46,35 @@ public class SearchChannelProperties {
          * 意图定向检索配置
          */
         private IntentDirected intentDirected = new IntentDirected();
+
+        private Keyword keyword = new Keyword();
+
+        private Fusion fusion = new Fusion();
+    }
+
+    /**
+     * 关键词（BM25）检索通道配置。
+     * 依赖 Milvus 2.5+ 的全文检索能力；新建 collection 时才会创建 BM25 字段，存量 collection 不受影响。
+     */
+    @Data
+    public static class Keyword {
+        private boolean enabled = false;
+        private int topKMultiplier = 2;
+    }
+
+    /**
+     * 多路召回融合（RRF）配置
+     */
+    @Data
+    public static class Fusion {
+        private boolean enabled = true;
+        private int rrfK = 60;
+        private double vectorWeight = 1.0;
+        private double keywordWeight = 1.0;
+        /**
+         * 进入 Rerank 的候选数 = topK * candidateMultiplier
+         */
+        private int candidateMultiplier = 3;
     }
 
     @Data

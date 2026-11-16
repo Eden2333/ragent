@@ -21,7 +21,10 @@ import cn.hutool.core.util.StrUtil;
 import com.nageoffer.ai.ragent.rag.config.RAGDefaultProperties;
 import com.nageoffer.ai.ragent.framework.convention.RetrievedChunk;
 import com.nageoffer.ai.ragent.infra.embedding.EmbeddingService;
+import com.nageoffer.ai.ragent.rag.core.vector.MilvusVectorStoreAdmin;
 import io.milvus.v2.client.MilvusClientV2;
+import io.milvus.v2.common.IndexParam;
+import io.milvus.v2.service.vector.request.data.EmbeddedText;
 import io.milvus.v2.service.vector.request.SearchReq;
 import io.milvus.v2.service.vector.request.data.BaseVector;
 import io.milvus.v2.service.vector.request.data.FloatVec;
@@ -83,6 +86,36 @@ public class MilvusRetrieverService implements RetrieverService {
 
         // TODO 需确认后续是否对分数较低数据进行限制，限制多少合适？0.65？
         // TODO 如果本次查询分数都较高，是否应该扩大查询范围？1.5倍？
+        return results.get(0).stream()
+                .map(r -> new RetrievedChunk(
+                        Objects.toString(r.getEntity().get("doc_id"), ""),
+                        Objects.toString(r.getEntity().get("content"), ""),
+                        r.getScore()))
+                .collect(Collectors.toList());
+    }
+
+    @Override
+    public List<RetrievedChunk> retrieveByKeyword(RetrieveRequest retrieveParam) {
+        if (StrUtil.isBlank(retrieveParam.getQuery())) {
+            return List.of();
+        }
+        SearchReq req = SearchReq.builder()
+                .collectionName(
+                        StrUtil.isBlank(retrieveParam.getCollectionName()) ? ragDefaultProperties.getCollectionName() : retrieveParam.getCollectionName()
+                )
+                .annsField(MilvusVectorStoreAdmin.KEYWORD_SPARSE_FIELD)
+                .data(List.of(new EmbeddedText(retrieveParam.getQuery())))
+                .metricType(IndexParam.MetricType.BM25)
+                .topK(retrieveParam.getTopK())
+                .outputFields(List.of("doc_id", "content", "metadata"))
+                .build();
+
+        SearchResp resp = milvusClient.search(req);
+        List<List<SearchResp.SearchResult>> results = resp.getSearchResults();
+        if (results == null || results.isEmpty()) {
+            return List.of();
+        }
+
         return results.get(0).stream()
                 .map(r -> new RetrievedChunk(
                         Objects.toString(r.getEntity().get("doc_id"), ""),
