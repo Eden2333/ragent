@@ -37,6 +37,7 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Objects;
+import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executor;
 import java.util.stream.Collectors;
@@ -162,7 +163,10 @@ public class MultiChannelRetrievalEngine {
             return directedFinal;
         }
 
-        log.info("灰区定向召回不足，补充执行全局检索通道");
+        // 全局补充只检索定向通道未覆盖的 collection，避免重复召回，使定向结果成为互补来源
+        Set<String> directedCollections = resolveDirectedCollections(context);
+        context.getMetadata().put(SearchContext.META_EXCLUDE_COLLECTIONS, directedCollections);
+        log.info("灰区定向召回不足，补充执行全局检索通道，排除已检索的 collection: {}", directedCollections);
         SearchChannelResult globalResult = safeSearch(globalChannel, context);
         results.add(globalResult);
 
@@ -178,6 +182,20 @@ public class MultiChannelRetrievalEngine {
      * 1. 结果数量不足 topK；
      * 2. Rerank 后最高分低于质量阈值。
      */
+    /**
+     * 解析定向通道实际检索过的 collection（与 IntentDirectedSearchChannel 的筛选口径一致）
+     */
+    private Set<String> resolveDirectedCollections(SearchContext context) {
+        double minScore = searchChannelProperties.getChannels().getIntentDirected().getMinIntentScore();
+        return context.getIntents().stream()
+                .flatMap(si -> si.nodeScores().stream())
+                .filter(ns -> ns.getNode() != null && ns.getNode().isKB())
+                .filter(ns -> ns.getScore() >= minScore)
+                .map(ns -> ns.getNode().getCollectionName())
+                .filter(name -> name != null && !name.isBlank())
+                .collect(Collectors.toSet());
+    }
+
     private boolean needGlobalFallback(List<RetrievedChunk> chunks, SearchContext context) {
         SearchChannelProperties.GrayZone grayZone =
                 searchChannelProperties.getChannels().getVectorGlobal().getGrayZone();

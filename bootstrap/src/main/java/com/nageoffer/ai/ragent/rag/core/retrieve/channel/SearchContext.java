@@ -68,6 +68,11 @@ public class SearchContext {
     /**
      * 获取主问题（优先使用重写后的问题）
      */
+    /**
+     * metadata key：全局检索需要排除的 collection 集合（Set&lt;String&gt;）
+     */
+    public static final String META_EXCLUDE_COLLECTIONS = "excludeCollections";
+
     public String getMainQuestion() {
         return rewrittenQuestion != null ? rewrittenQuestion : originalQuestion;
     }

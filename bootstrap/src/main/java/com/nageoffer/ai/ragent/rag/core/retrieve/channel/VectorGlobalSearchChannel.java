@@ -122,6 +122,10 @@ public class VectorGlobalSearchChannel implements SearchChannel {
 
             // 获取所有 KB 类型的 collection
             List<String> collections = getAllKBCollections();
+            Set<String> excluded = resolveExcluded(context);
+            if (!excluded.isEmpty()) {
+                collections.removeAll(excluded);
+            }
 
             if (collections.isEmpty()) {
                 log.warn("未找到任何 KB collection，跳过全局检索");
@@ -186,6 +190,13 @@ public class VectorGlobalSearchChannel implements SearchChannel {
         }
 
         return new ArrayList<>(collections);
+    }
+
+    @SuppressWarnings("unchecked")
+    private Set<String> resolveExcluded(SearchContext context) {
+        Object value = context.getMetadata() == null ? null
+                : context.getMetadata().get(SearchContext.META_EXCLUDE_COLLECTIONS);
+        return value instanceof Set<?> ? (Set<String>) value : Set.of();
     }
 
     /**
