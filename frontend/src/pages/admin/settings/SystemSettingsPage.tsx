@@ -124,6 +124,24 @@ export function SystemSettingsPage() {
         </CardContent>
       </Card>
 
+      {rag.search ? (
+        <Card>
+          <CardHeader>
+            <CardTitle>多路检索</CardTitle>
+            <CardDescription>关键词（BM25）通道与 RRF 融合；关键词通道仅对开启后新建的 Collection 生效</CardDescription>
+          </CardHeader>
+          <CardContent className="grid gap-4 md:grid-cols-3">
+            <InfoItem label="Keyword Enabled" value={<BoolBadge value={rag.search.keyword.enabled} />} />
+            <InfoItem label="Keyword TopK Multiplier" value={rag.search.keyword.topKMultiplier} />
+            <InfoItem label="Fusion Enabled" value={<BoolBadge value={rag.search.fusion.enabled} />} />
+            <InfoItem label="RRF K" value={rag.search.fusion.rrfK} />
+            <InfoItem label="Vector Weight" value={rag.search.fusion.vectorWeight} />
+            <InfoItem label="Keyword Weight" value={rag.search.fusion.keywordWeight} />
+            <InfoItem label="Candidate Multiplier" value={rag.search.fusion.candidateMultiplier} />
+          </CardContent>
+        </Card>
+      ) : null}
+
       <Card>
         <CardHeader>
           <CardTitle>模型服务提供方</CardTitle>

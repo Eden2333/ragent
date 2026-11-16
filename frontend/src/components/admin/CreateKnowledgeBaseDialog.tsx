@@ -61,6 +61,8 @@ export function CreateKnowledgeBaseDialog({
   const [loading, setLoading] = useState(false);
   const [modelLoading, setModelLoading] = useState(false);
   const [embeddingModels, setEmbeddingModels] = useState<ModelCandidate[]>([]);
+  // 系统配置的向量库维度，Collection 建表后不可变，只能选择维度一致的模型
+  const [vectorDimension, setVectorDimension] = useState<number | null>(null);
 
   const form = useForm<FormValues>({
     resolver: zodResolver(formSchema),
@@ -81,6 +83,7 @@ export function CreateKnowledgeBaseDialog({
         const candidates = settings.ai?.embedding?.candidates || [];
         const enabledModels = candidates.filter((item) => item.enabled !== false);
         setEmbeddingModels(enabledModels);
+        setVectorDimension(settings.rag?.default?.dimension ?? null);
       })
       .catch(() => {
         if (active) {
@@ -193,9 +196,15 @@ export function CreateKnowledgeBaseDialog({
                           const label = item.provider && item.model
                             ? `${item.provider} · ${item.model}`
                             : item.model || item.id;
+                          const dimensionMismatch =
+                            vectorDimension != null &&
+                            item.dimension != null &&
+                            item.dimension !== vectorDimension;
                           return (
-                            <SelectItem key={item.id} value={item.id}>
-                              {label}
+                            <SelectItem key={item.id} value={item.id} disabled={dimensionMismatch}>
+                              {dimensionMismatch
+                                ? `${label}（维度 ${item.dimension} 与向量库 ${vectorDimension} 不一致）`
+                                : label}
                             </SelectItem>
                           );
                         })

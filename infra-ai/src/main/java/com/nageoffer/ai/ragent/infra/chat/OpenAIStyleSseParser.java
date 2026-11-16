@@ -55,7 +55,14 @@ final class OpenAIStyleSseParser {
 
         JsonObject choice0 = choices.get(0).getAsJsonObject();
         String content = extractText(choice0, "content");
-        String reasoning = reasoningEnabled ? extractText(choice0, "reasoning_content") : null;
+        String reasoning = null;
+        if (reasoningEnabled) {
+            // 兼容两种字段名：reasoning_content（百炼/硅基流动）与 reasoning（MCD 网关）
+            reasoning = extractText(choice0, "reasoning_content");
+            if (reasoning == null) {
+                reasoning = extractText(choice0, "reasoning");
+            }
+        }
         boolean completed = hasFinishReason(choice0);
 
         return new ParsedEvent(content, reasoning, completed);

@@ -29,6 +29,19 @@ export interface SystemSettings {
       summaryMaxChars: number;
       titleMaxLength: number;
     };
+    search?: {
+      keyword: {
+        enabled: boolean;
+        topKMultiplier: number;
+      };
+      fusion: {
+        enabled: boolean;
+        rrfK: number;
+        vectorWeight: number;
+        keywordWeight: number;
+        candidateMultiplier: number;
+      };
+    };
   };
   ai: {
     providers: Record<

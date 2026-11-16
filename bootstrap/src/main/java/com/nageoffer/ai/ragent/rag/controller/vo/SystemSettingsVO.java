@@ -137,6 +137,33 @@ public class SystemSettingsVO {
         private Integer titleMaxLength;
     }
 
+    /**
+     * 多路检索设置：关键词（BM25）通道与 RRF 融合
+     */
+    @Data
+    @Builder
+    public static class SearchSettings {
+        private KeywordSettings keyword;
+        private FusionSettings fusion;
+    }
+
+    @Data
+    @Builder
+    public static class KeywordSettings {
+        private Boolean enabled;
+        private Integer topKMultiplier;
+    }
+
+    @Data
+    @Builder
+    public static class FusionSettings {
+        private Boolean enabled;
+        private Integer rrfK;
+        private Double vectorWeight;
+        private Double keywordWeight;
+        private Integer candidateMultiplier;
+    }
+
     @Setter
     @Getter
     public static class RagSettings {
@@ -145,13 +172,15 @@ public class SystemSettingsVO {
         private QueryRewriteSettings queryRewrite;
         private RateLimitSettings rateLimit;
         private MemorySettings memory;
+        private SearchSettings search;
 
         public RagSettings(DefaultSettings defaultConfig, QueryRewriteSettings queryRewrite,
-                           RateLimitSettings rateLimit, MemorySettings memory) {
+                           RateLimitSettings rateLimit, MemorySettings memory, SearchSettings search) {
             this.defaultConfig = defaultConfig;
             this.queryRewrite = queryRewrite;
             this.rateLimit = rateLimit;
             this.memory = memory;
+            this.search = search;
         }
 
         public static RagSettingsBuilder builder() {
@@ -163,6 +192,7 @@ public class SystemSettingsVO {
             private QueryRewriteSettings queryRewrite;
             private RateLimitSettings rateLimit;
             private MemorySettings memory;
+            private SearchSettings search;
 
             public RagSettingsBuilder defaultConfig(DefaultSettings defaultConfig) {
                 this.defaultConfig = defaultConfig;
@@ -184,8 +214,13 @@ public class SystemSettingsVO {
                 return this;
             }
 
+            public RagSettingsBuilder search(SearchSettings search) {
+                this.search = search;
+                return this;
+            }
+
             public RagSettings build() {
-                return new RagSettings(defaultConfig, queryRewrite, rateLimit, memory);
+                return new RagSettings(defaultConfig, queryRewrite, rateLimit, memory, search);
             }
         }
     }

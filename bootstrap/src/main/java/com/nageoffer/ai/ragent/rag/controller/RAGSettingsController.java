@@ -24,6 +24,7 @@ import com.nageoffer.ai.ragent.rag.config.MemoryProperties;
 import com.nageoffer.ai.ragent.rag.config.RAGConfigProperties;
 import com.nageoffer.ai.ragent.rag.config.RAGDefaultProperties;
 import com.nageoffer.ai.ragent.rag.config.RAGRateLimitProperties;
+import com.nageoffer.ai.ragent.rag.config.SearchChannelProperties;
 import com.nageoffer.ai.ragent.rag.controller.vo.SystemSettingsVO;
 import com.nageoffer.ai.ragent.rag.controller.vo.SystemSettingsVO.AISettings;
 import com.nageoffer.ai.ragent.rag.controller.vo.SystemSettingsVO.DefaultSettings;
@@ -48,6 +49,7 @@ public class RAGSettingsController {
     private final RAGRateLimitProperties ragRateLimitProperties;
     private final MemoryProperties memoryProperties;
     private final AIModelProperties aiModelProperties;
+    private final SearchChannelProperties searchChannelProperties;
 
     /**
      * 获取系统 RAG、AI 模型等配置信息
@@ -72,6 +74,7 @@ public class RAGSettingsController {
                                         .build())
                                 .build())
                         .memory(toMemorySettings(memoryProperties))
+                        .search(toSearchSettings(searchChannelProperties))
                         .build())
                 .ai(toAISettings(aiModelProperties))
                 .build();
@@ -83,6 +86,24 @@ public class RAGSettingsController {
                 .collectionName(props.getCollectionName())
                 .dimension(props.getDimension())
                 .metricType(props.getMetricType())
+                .build();
+    }
+
+    private SystemSettingsVO.SearchSettings toSearchSettings(SearchChannelProperties props) {
+        SearchChannelProperties.Keyword keyword = props.getChannels().getKeyword();
+        SearchChannelProperties.Fusion fusion = props.getChannels().getFusion();
+        return SystemSettingsVO.SearchSettings.builder()
+                .keyword(SystemSettingsVO.KeywordSettings.builder()
+                        .enabled(keyword.isEnabled())
+                        .topKMultiplier(keyword.getTopKMultiplier())
+                        .build())
+                .fusion(SystemSettingsVO.FusionSettings.builder()
+                        .enabled(fusion.isEnabled())
+                        .rrfK(fusion.getRrfK())
+                        .vectorWeight(fusion.getVectorWeight())
+                        .keywordWeight(fusion.getKeywordWeight())
+                        .candidateMultiplier(fusion.getCandidateMultiplier())
+                        .build())
                 .build();
     }
 
